@@ -248,6 +248,38 @@ class NativeSession:
             raise ValueError("stdin requires text")
         await asyncio.to_thread(self._request, "/api/kernel/stdin", {"text": text})
 
+    async def set_ui_element(self, object_id, value):
+        """Push a `mo.ui` element's new value and consume the cycle it triggers.
+
+        The endpoint only acknowledges the request; the recomputation arrives as
+        a reactive cycle, so the caller must wait for `completed-run` just like a
+        run. Values are validated before any HTTP call so a bad payload cannot
+        kill a live session.
+        """
+        if self.closed:
+            raise RuntimeError("Session stopped; reconnect before using widgets")
+        if not isinstance(object_id, str) or not object_id.strip():
+            raise ValueError("A widget object id is required")
+        try:
+            json.dumps(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError("A widget value must be JSON-serializable") from error
+        try:
+            async with self._cycle_lock:
+                if self.closed:
+                    raise RuntimeError("Session stopped; reconnect before using widgets")
+                await asyncio.to_thread(
+                    self._request,
+                    "/api/kernel/set_ui_element_value",
+                    {"objectIds": [object_id], "values": [value]},
+                )
+                return await self._collect_run()
+        except BaseException:
+            # A half-consumed cycle cannot be reused by the next request.
+            await self.close()
+            raise
+
+
     async def save(self, cells):
         self._validate_cells(cells, all_cells=True)
         if hashlib.sha256(self.filename.read_bytes()).hexdigest() != self.fingerprint:
@@ -343,6 +375,8 @@ async def serve(filename):
                 await session.run(request["cells"])
             elif method == "save":
                 await session.save(request["cells"])
+            elif method == "ui":
+                await session.set_ui_element(request.get("objectId"), request.get("value"))
             else:
                 await session.delete(request.get("cellId"))
             emit({"type": "result", "id": request_id})
@@ -375,7 +409,7 @@ async def serve(filename):
                 request = json.loads(line)
                 request_id = str(request["id"])
                 method = request["method"]
-                if method in ("run", "save", "delete"):
+                if method in ("run", "save", "delete", "ui"):
                     running = asyncio.create_task(handle_run(request, request_id))
                     pending.add(running)
                     running.add_done_callback(pending.discard)

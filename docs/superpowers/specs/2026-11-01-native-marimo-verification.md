@@ -123,3 +123,18 @@ WorkBuddy 对安装源码进行了独立只读调查，提供了路由、通知�
 宿主回归脚本 `assets/verify-native-opening.py` 使用唯一命名的专用文件，通过后移入本机回收站；原demo只读打开，不改写。实际点击文件列表验证：预览4块且无后端；普通脚本无运行按钮；重复点击同文件仅1页；无关rename保持当前文件；点击连接、编辑运行上游后输出由12变21、点击保存成功；换文件后旧PID退出；旧filename状态恢复4块成功。最终返回原demo只读预览。完整结果：`assets/native-opening-verification.json`。宿主错误面板无错误。
 
 本轮未commit、push或发布；不作为Windows/Linux或完整marimo功能通过的证据。
+
+## mo.ui 原生控件（P0）
+
+结论：`mo.ui.*` 的输出是 `<marimo-ui-element object-id>` 包裹一个组件元素，全部状态在 `data-*` 属性里（JSON 编码，再经 HTML 实体转义）。宿主 `sanitizeHTMLToDom` 会剥掉未知自定义元素，因此控件必须在净化**之前**从原始 HTML 抽取（`extractUiElements`），以 `data-widget-slot` 占位符过净化，再挂载原生控件。已实证的交互（全部真实输入）：滑块用鼠标点击轨道（level 3→8，读数与 DOM 同步）、下拉用键盘 type-ahead（alpha→beta）、文本用真实键入加失焦提交（hi→there）、复选框用鼠标点击（False→True）；每次回写触发一轮响应周期、以 `completed-run` 结束，下游单元格输出自动更新，会话保持可用。
+
+- 支持：slider、range-slider、number、text、text-area、checkbox、switch、radio、dropdown、multiselect、date、datetime、button、tabs、form、table（只读）。form 提交把内部元素当前值发给表单的 object id，与上游 `_convert_value`（`element._update_value`）一致；tabs 发送索引字符串；下拉/多选发送选项名数组；button 发送点击计数。
+- 回写通道：`POST /api/kernel/set_ui_element_value`（`objectIds`+`values`），适配层在 `_cycle_lock` 内等待整轮周期；无依赖元素的控件同样会正常结束周期（真实内核测试覆盖，避免挂在等不到 `completed-run` 的假设上）。
+- 并发：同一控件的多次改动合并为最新值后逐个发送；控件周期期间 run/save/结构操作被禁用；会话异常或断开时清空待发队列。
+- anywidget 静默：marimo 会从普通 `import marimo as mo` 单元格发出一个无标签的内部 anywidget 占位（两个独立 fixture 均复现），若显示「未适配」说明，则每个笔记本都会出现噪音；其余未支持类型（file、data-editor、data-explorer、file-browser、code-editor、matrix、dict、date-range）显示类型说明，且不渲染任何死控件。
+- 表格只读：按 `data-data` 双重编码的行数据渲染，超过 50 行注明总数；选择、筛选、下载未实现。
+- 控件所属单元格被显式重跑时输出会重建（与输出刷新同一机制）；仅改动控件值不重发控件单元格的输出，因此输入焦点不会在回写周期中丢失。
+
+证据：`assets/verify-ui-elements.py`、`ui-elements-verification.json`、`ui5-widgets-light.png`、`ui5-widgets-dark.png`；fixture 用后移入回收站，Temp 回到 demo 只读预览、无后台进程。测试：`tests/ui-elements.test.ts`（属性解码、抽取、标签、选项、表格、值形状）、`tests/test_widgets.py`（真实内核回写 4 项）。Node 81 项、Python 51 项全部通过；typecheck/build 通过；dist 三文件与 Temp 安装 sha256 一致。
+
+本轮仍未验证：plotly/altair 等富交互输出、表格选择回写、`mo.ui.refresh`、Windows/Linux；多列布局（`column`）仍未渲染。

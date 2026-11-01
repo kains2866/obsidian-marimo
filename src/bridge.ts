@@ -4,7 +4,7 @@ import {stopOwnedProcess} from './process-lifecycle';
 import {decodeMessage, type BackendMessage, type Cell, type RequestResult} from './protocol';
 import backendSource from '../python/backend.py';
 
-export type RequestMethod = 'run' | 'save' | 'create' | 'delete' | 'interrupt' | 'stdin';
+export type RequestMethod = 'run' | 'save' | 'create' | 'delete' | 'interrupt' | 'stdin' | 'ui';
 
 export interface RequestPayload {
   cells?: Cell[];
@@ -14,6 +14,10 @@ export interface RequestPayload {
   code?: string;
   /** Answer for a pending `input()`. */
   value?: string;
+  /** Widget whose value is being written back. */
+  objectId?: string;
+  /** New widget value, already normalised to the shape its element expects. */
+  widgetValue?: unknown;
 }
 
 export class Backend {
@@ -55,13 +59,14 @@ export class Backend {
   request(method: RequestMethod, payload: RequestPayload = {}): Promise<RequestResult> {
     if (this.closed || !this.process || this.process.exitCode !== null) return Promise.reject(new Error('Session is not connected'));
     const id = String(++this.serial);
-    // Run/save/delete wait for a whole reactive cycle; the rest must answer fast.
-    const long = method === 'run' || method === 'save' || method === 'delete';
+    // Run/save/delete/widget wait for a whole reactive cycle; the rest must answer fast.
+    const long = method === 'run' || method === 'save' || method === 'delete' || method === 'ui';
     const frame: Record<string, unknown> = {id, method};
     if (method === 'run' || method === 'save') frame.cells = payload.cells ?? [];
     else if (method === 'create') frame.code = payload.code ?? '';
     else if (method === 'delete') frame.cellId = payload.cellId ?? '';
     else if (method === 'stdin') frame.value = payload.value ?? '';
+    else if (method === 'ui') {frame.objectId = payload.objectId ?? ''; frame.value = payload.widgetValue ?? null;}
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {this.pending.delete(id); reject(new Error(`${method} timed out; session stopped`)); this.close();}, long ? 120_000 : 15_000);
       this.pending.set(id, {resolve, reject, timer});

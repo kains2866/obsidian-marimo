@@ -12,6 +12,8 @@ import {isAllowedImageSource, isBlockedAttribute, isBlockedElement} from './outp
 import {canAdoptClaim, cellActions, connectionState, environmentLabel, normalizeCellStatus, shouldApplyResult, shouldApplyStopResult, showPrototypeInfo, statusView, toolbarAvailability, type CellStatus, type ConnectionState, type RunPhase} from './status';
 import {fileFromViewState} from './file-state';
 import {inspectSource} from './inspection';
+import {mountWidgets} from './widgets';
+import {extractUiElements} from './ui-elements';
 import inspectorSource from '../python/inspect_notebook.py';
 import type MarimoPlugin from './main';
 import type {WriterLease} from './writer-lock';
@@ -62,6 +64,9 @@ export class MarimoView extends EditableFileView {
   private hasDraft = false;
   private selectedId: string | null = null;
   private operation = 0;
+  /** Latest unsent value per widget, so a fast drag cannot pile up cycles. */
+  private widgetPending = new Map<string, unknown>();
+  private widgetFlush: Promise<void>|null = null;
   constructor(leaf: WorkspaceLeaf, private plugin: MarimoPlugin) {super(leaf);}
   isClosed():boolean {return this.closed;}
   getViewType(): string {return VIEW_TYPE;}
@@ -282,6 +287,7 @@ export class MarimoView extends EditableFileView {
     this.backend=null;
     this.connecting=false;
     this.busy=false;
+    this.widgetPending.clear();
     if(this.dirty)try{this.plugin.saveRecovery(this.filename,this.readCells(),[...this.baseCodes]);}catch(error){new Notice(String(error));}
     this.setCellsReadOnly();
     this.clearCellStatuses();
@@ -353,6 +359,39 @@ export class MarimoView extends EditableFileView {
     } catch(error) {
       row.removeClass('is-sending');
       this.showNotice(String(error),'error');
+    }
+  }
+
+  /**
+   * A widget change is a reactive cycle of its own. Values are coalesced per
+   * element and sent one at a time: two cycles must never share the socket.
+   */
+  private queueWidgetValue(objectId: string, value: unknown): void {
+    if(this.closed||!this.backend) return;
+    this.widgetPending.set(objectId,value);
+    if(!this.widgetFlush) this.widgetFlush=this.flushWidgetQueue().finally(()=>{this.widgetFlush=null;});
+  }
+
+  private async flushWidgetQueue(): Promise<void> {
+    while(this.widgetPending.size) {
+      const backend=this.backend;
+      if(!backend||this.closed||this.connecting||this.stopping) {this.widgetPending.clear();return;}
+      const [objectId,value]=this.widgetPending.entries().next().value as [string,unknown];
+      this.widgetPending.delete(objectId);
+      const operation=++this.operation;
+      this.busy=true;this.runPhase='running';this.updateControls();
+      try {
+        await backend.request('ui',{objectId,widgetValue:value});
+        if(!shouldApplyResult({backend,operation},{backend:this.backend,operation:this.operation})) return;
+        if(this.runPhase==='running')this.runPhase='finished';
+      } catch(error) {
+        if(!shouldApplyResult({backend,operation},{backend:this.backend,operation:this.operation})) return;
+        this.widgetPending.clear();
+        if(!this.closed){this.disconnect();this.showNotice(String(error),'error');new Notice(String(error));}
+        return;
+      } finally {
+        if(operation===this.operation){this.busy=false;if(!this.closed)this.updateControls();}
+      }
     }
   }
 
@@ -637,11 +676,14 @@ export class MarimoView extends EditableFileView {
     }
     if(output.kind==='text') {if(output.text)target.createEl('pre',{cls:'marimo-native-text'+errorClass,text:output.text}); return;}
     if(output.kind==='html') {
-      const fragment=sanitizeHTMLToDom(output.text);
+      // Custom elements never survive the host sanitizer, so widgets are lifted
+      // out of the raw string and the rest is sanitized as usual.
+      const extracted=extractUiElements(output.text);
+      const fragment=sanitizeHTMLToDom(extracted.html);
       // marimo emits placeholder markup such as `<div></div>`; an output block with
       // no text and no visible structure must not reserve space or draw a divider.
       const visibleText=!!fragment.textContent?.trim();
-      const visibleStructure=!!fragment.querySelector('pre,table,ul,ol,blockquote,hr,figure,code,h1,h2,h3,h4,h5,h6,img');
+      const visibleStructure=extracted.widgets.length>0||!!fragment.querySelector('pre,table,ul,ol,blockquote,hr,figure,code,h1,h2,h3,h4,h5,h6,img,[data-widget-slot]');
       if(!visibleText && !visibleStructure) return;
       // Inline raster data URLs survive; every other image source is dropped.
       fragment.querySelectorAll('img').forEach(image=>{
@@ -659,6 +701,11 @@ export class MarimoView extends EditableFileView {
       });
       const wrapper=target.createDiv({cls:'marimo-native-html'+errorClass});
       wrapper.appendChild(fragment);
+      mountWidgets(wrapper, extracted.widgets, {
+        send:(objectId,value)=>this.queueWidgetValue(objectId,value),
+        translate:(zh,en)=>this.plugin.t(zh,en),
+        sanitize:html=>sanitizeHTMLToDom(html),
+      });
       return;
     }
     target.createDiv({cls:'marimo-native-unsupported',text:this.plugin.t('此输出类型尚未适配：','Output type not yet supported: ')+output.text});
@@ -752,6 +799,8 @@ export class MarimoView extends EditableFileView {
 
   private disconnect():void {
     this.operation++;this.busy=false;
+    // A queued widget value has no session to reach any more.
+    this.widgetPending.clear();
     if(this.dirty)try{this.plugin.saveRecovery(this.filename,this.readCells(),[...this.baseCodes]);}catch(error){new Notice(String(error));}
     const backend=this.backend;this.backend=null;
     void backend?.close().catch(error=>new Notice(String(error)));
@@ -764,6 +813,7 @@ export class MarimoView extends EditableFileView {
   private releaseLease():void {const lease=this.lease;this.lease=null;this.plugin.release(lease);}
   private async releaseFileSession():Promise<void> {
     this.operation++;this.busy=false;this.connecting=false;this.stopping=false;this.notebookReady=false;
+    this.widgetPending.clear();
     this.inspection?.abort();this.inspection=null;
     if(this.dirty) {
       try{this.plugin.saveRecovery(this.filename,this.readCells(),[...this.baseCodes]);}

@@ -74,3 +74,18 @@ test('the stdin channel is recognized so the view can prompt',()=>{
   assert.equal(isStdinOutput({channel:'stdout',mimetype:'text/plain',data:'x'}),false);
   assert.equal(isStdinOutput(null),false);
 });
+
+test('formatter and completion results are validated before use',()=>{
+  const formatted=decodeMessage('{"type":"result","id":"9","codes":{"abc":"x = 1"}}');
+  assert.equal(formatted.type,'result');
+  if(formatted.type==='result')assert.deepEqual(formatted.codes,{abc:'x = 1'});
+  // Non-string code would replace a cell with "undefined".
+  assert.throws(()=>decodeMessage('{"type":"result","id":"9","codes":{"abc":42}}'));
+  assert.throws(()=>decodeMessage('{"type":"result","id":"9","codes":[]}'));
+
+  const completed=decodeMessage('{"type":"result","id":"10","prefixLength":2,"options":[{"name":"marimo","type":"module","info":"module marimo"}]}');
+  assert.equal(completed.type,'result');
+  if(completed.type==='result')assert.equal(completed.options?.[0].name,'marimo');
+  assert.throws(()=>decodeMessage('{"type":"result","id":"10","options":[{"type":1}]}'));
+  assert.throws(()=>decodeMessage('{"type":"result","id":"10","prefixLength":-1}'));
+});

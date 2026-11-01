@@ -69,6 +69,8 @@ export interface ToolbarInput {
   stopping?: boolean;
   /** An explicit run/save request is in flight, independent of the run phase. */
   busy?: boolean;
+  /** At least one cell has inputs that changed since its last run. */
+  hasStale?: boolean;
 }
 
 export interface ToolbarAvailability {
@@ -79,6 +81,10 @@ export interface ToolbarAvailability {
   restore: boolean;
   /** Cancels the current run without dropping the session. */
   interrupt: boolean;
+  /** Rewrites every cell with the server's formatter. */
+  format: boolean;
+  /** Runs only the cells whose inputs changed. */
+  runStale: boolean;
 }
 
 export function toolbarAvailability(input: ToolbarInput): ToolbarAvailability {
@@ -96,6 +102,9 @@ export function toolbarAvailability(input: ToolbarInput): ToolbarAvailability {
     restore: live && !busy && input.ready && input.hasDraft,
     // Interrupt is the only action that must stay live during `running`.
     interrupt: live && !stopping && input.run === 'running',
+    format: live && !busy,
+    // Nothing stale means nothing to do: the button stays visible but inert.
+    runStale: live && !busy && input.hasStale === true,
   };
 }
 

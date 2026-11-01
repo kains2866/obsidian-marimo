@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {insertCell, moveCell, removeCell} from '../src/cells.ts';
+import {insertCell, moveCell, nextCellId, removeCell} from '../src/cells.ts';
 import type {Cell} from '../src/protocol.ts';
 
 const cells: Cell[] = [
@@ -37,4 +37,11 @@ test('removing drops exactly the requested cell and keeps the rest in order', ()
   assert.deepEqual(removeCell(cells, 'b').map(cell => cell.id), ['a', 'c']);
   assert.deepEqual(removeCell(cells, 'missing').map(cell => cell.id), ['a', 'b', 'c']);
   assert.deepEqual(removeCell(cells, 'c').map(cell => cell.id), ['a', 'b']);
+});
+
+test('focusing the next cell stops at the end instead of wrapping', () => {
+  assert.equal(nextCellId(cells, 'a'), 'b');
+  assert.equal(nextCellId(cells, 'b'), 'c');
+  assert.equal(nextCellId(cells, 'c'), null);
+  assert.equal(nextCellId(cells, 'missing'), null);
 });

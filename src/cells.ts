@@ -31,3 +31,13 @@ export function insertCell(cells: Cell[], cell: Cell, index: number): Cell[] {
 export function removeCell(cells: Cell[], id: string): Cell[] {
   return cells.filter(cell => cell.id !== id);
 }
+
+/**
+ * The cell a "run and move on" gesture should focus next. The last cell has no
+ * successor: the caller keeps the focus where it is instead of jumping away.
+ */
+export function nextCellId(cells: Cell[], id: string): string | null {
+  const index = cells.findIndex(cell => cell.id === id);
+  if (index < 0 || index >= cells.length - 1) return null;
+  return cells[index + 1].id;
+}

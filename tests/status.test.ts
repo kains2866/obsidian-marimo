@@ -41,20 +41,20 @@ test('status text is translated without changing structure',()=>{
 });
 
 test('actions are unavailable before a real session exists',()=>{
-  assert.deepEqual(toolbarAvailability({connection:'disconnected',run:'none',ready:true,hasDraft:false}),{connect:true,runAll:false,save:false,stop:false,restore:false,interrupt:false});
-  assert.deepEqual(toolbarAvailability({connection:'connecting',run:'none',ready:true,hasDraft:true}),{connect:false,runAll:false,save:false,stop:true,restore:false,interrupt:false});
+  assert.deepEqual(toolbarAvailability({connection:'disconnected',run:'none',ready:true,hasDraft:false}),{connect:true,runAll:false,save:false,stop:false,restore:false,interrupt:false,format:false,runStale:false});
+  assert.deepEqual(toolbarAvailability({connection:'connecting',run:'none',ready:true,hasDraft:true}),{connect:false,runAll:false,save:false,stop:true,restore:false,interrupt:false,format:false,runStale:false});
 });
 test('a connected idle session can run and save, and can stop',()=>{
-  assert.deepEqual(toolbarAvailability({connection:'connected',run:'none',ready:true,hasDraft:false}),{connect:false,runAll:true,save:true,stop:true,restore:false,interrupt:false});
+  assert.deepEqual(toolbarAvailability({connection:'connected',run:'none',ready:true,hasDraft:false}),{connect:false,runAll:true,save:true,stop:true,restore:false,interrupt:false,format:true,runStale:false});
 });
 test('busy runs block duplicate run and save requests but keep stop available',()=>{
-  assert.deepEqual(toolbarAvailability({connection:'connected',run:'running',ready:true,hasDraft:true}),{connect:false,runAll:false,save:false,stop:true,restore:false,interrupt:true});
+  assert.deepEqual(toolbarAvailability({connection:'connected',run:'running',ready:true,hasDraft:true}),{connect:false,runAll:false,save:false,stop:true,restore:false,interrupt:true,format:false,runStale:false});
 });
 test('stopping blocks every action including a second stop',()=>{
-  assert.deepEqual(toolbarAvailability({connection:'connected',run:'none',ready:true,hasDraft:false,stopping:true}),{connect:false,runAll:false,save:false,stop:false,restore:false,interrupt:false});
+  assert.deepEqual(toolbarAvailability({connection:'connected',run:'none',ready:true,hasDraft:false,stopping:true}),{connect:false,runAll:false,save:false,stop:false,restore:false,interrupt:false,format:false,runStale:false});
 });
 test('an ordinary Python script cannot be connected or restored',()=>{
-  assert.deepEqual(toolbarAvailability({connection:'disconnected',run:'none',ready:false,hasDraft:true}),{connect:false,runAll:false,save:false,stop:false,restore:false,interrupt:false});
+  assert.deepEqual(toolbarAvailability({connection:'disconnected',run:'none',ready:false,hasDraft:true}),{connect:false,runAll:false,save:false,stop:false,restore:false,interrupt:false,format:false,runStale:false});
 });
 test('the restore action needs both a draft and a live session',()=>{
   assert.equal(toolbarAvailability({connection:'connected',run:'none',ready:true,hasDraft:true}).restore,true);
@@ -127,4 +127,15 @@ test('a superseded request must not overwrite the state of a newer session',()=>
   assert.equal(shouldApplyResult({backend:{id:1},operation:4},restarted),false);
   const same={backend:stopped.backend,operation:5};
   assert.equal(shouldApplyResult({backend:null,operation:5},same),true);
+});
+
+test('a stale notebook offers a targeted run, and formatting stays available',()=>{
+  const live = toolbarAvailability({connection:'connected',run:'finished',ready:true,hasDraft:false,hasStale:true});
+  assert.equal(live.runStale,true);
+  assert.equal(live.format,true);
+  assert.equal(live.runAll,true);
+  // Nothing stale: the button must be visible but inert.
+  assert.equal(toolbarAvailability({connection:'connected',run:'finished',ready:true,hasDraft:false,hasStale:false}).runStale,false);
+  // A running cycle owns the session; formatting must wait.
+  assert.equal(toolbarAvailability({connection:'connected',run:'running',ready:true,hasDraft:false,hasStale:true}).format,false);
 });

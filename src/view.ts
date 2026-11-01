@@ -1,11 +1,13 @@
-import {EditableFileView, Notice, sanitizeHTMLToDom, setIcon, type WorkspaceLeaf, type TFile, type ViewStateResult} from 'obsidian';
+import {EditableFileView, Notice, Scope, sanitizeHTMLToDom, setIcon, type WorkspaceLeaf, type TFile, type ViewStateResult} from 'obsidian';
 import {EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter} from '@codemirror/view';
 import {Compartment, EditorState} from '@codemirror/state';
 import {python} from '@codemirror/lang-python';
 import {defaultKeymap, history, historyKeymap} from '@codemirror/commands';
+import {autocompletion, type CompletionContext, type CompletionResult} from '@codemirror/autocomplete';
 import {syntaxHighlighting} from '@codemirror/language';
 import {Backend} from './bridge';
-import {insertCell, moveCell, removeCell} from './cells';
+import {insertCell, moveCell, nextCellId, removeCell} from './cells';
+import {cellPresentation, mergeCellConfig, readCellConfig, wireConfig, type CellConfig} from './cell-config';
 import {nativeHighlight} from './editor-theme';
 import {isErrorOutput, isStdinOutput, safeOutput, type BackendMessage, type Cell} from './protocol';
 import {isAllowedImageSource, isBlockedAttribute, isBlockedElement} from './output-policy';
@@ -48,6 +50,8 @@ export class MarimoView extends EditableFileView {
   private saveButton!: HTMLButtonElement;
   private stopButton!: HTMLButtonElement;
   private interruptButton!: HTMLButtonElement;
+  private formatButton!: HTMLButtonElement;
+  private staleButton!: HTMLButtonElement;
   private restoreButton!: HTMLButtonElement;
   private notice!: HTMLElement;
   private previewNote!: HTMLElement;
@@ -67,6 +71,11 @@ export class MarimoView extends EditableFileView {
   /** Latest unsent value per widget, so a fast drag cannot pile up cycles. */
   private widgetPending = new Map<string, unknown>();
   private widgetFlush: Promise<void>|null = null;
+  /** Owns Mod-Enter while this view is active; see `onOpen`. */
+  private keyScope: Scope|null = null;
+  /** The open per-cell popover, if any, and its outside-click handler. */
+  private cellMenu: HTMLElement|null = null;
+  private menuDismiss: ((event:Event)=>void)|null = null;
   constructor(leaf: WorkspaceLeaf, private plugin: MarimoPlugin) {super(leaf);}
   isClosed():boolean {return this.closed;}
   getViewType(): string {return VIEW_TYPE;}
@@ -92,7 +101,7 @@ export class MarimoView extends EditableFileView {
     this.status.dataset.tone = view.tone;
   }
   private updateControls(): void {
-    const available = toolbarAvailability({connection:this.connection(), run:this.runPhase, ready:this.notebookReady, hasDraft:this.hasDraft, stopping:this.stopping, busy:this.busy});
+    const available = toolbarAvailability({connection:this.connection(), run:this.runPhase, ready:this.notebookReady, hasDraft:this.hasDraft, stopping:this.stopping, busy:this.busy, hasStale:this.hasStaleCells()});
     this.connectButton.hidden = !this.notebookReady || this.connection() !== 'disconnected';
     this.connectButton.disabled = !available.connect;
     this.runButton.disabled = !available.runAll;
@@ -101,10 +110,39 @@ export class MarimoView extends EditableFileView {
     this.restoreButton.hidden = !available.restore;
     this.interruptButton.hidden = !available.interrupt;
     this.interruptButton.disabled = !available.interrupt;
+    this.formatButton.disabled = !available.format;
+    this.staleButton.disabled = !available.runStale;
     this.info.hidden = !showPrototypeInfo({ready:this.notebookReady, connection:this.connection()});
-    this.body.querySelectorAll<HTMLButtonElement>('button[data-action="run-cell"]').forEach(button => {button.disabled = !available.runAll;});
+    this.body.querySelectorAll<HTMLButtonElement>('button[data-action="run-cell"]').forEach(button => {button.disabled = !available.runAll || button.closest('.marimo-native-cell')?.classList.contains('is-disabled') === true;});
     this.updateCellActions();
     this.updateStatus();
+  }
+
+  /** Any row the kernel flagged with stale inputs, or edited since its last run. */
+  private hasStaleCells(): boolean {
+    if(!this.body) return false;
+    return !!this.body.querySelector('.marimo-native-cell[data-stale="true"], .marimo-native-cell[data-cell-status="stale"]');
+  }
+  private staleCells(): Cell[] {
+    const codes=new Map(this.readCells().map(cell=>[cell.id,cell]));
+    return Array.from(this.body.querySelectorAll<HTMLElement>('.marimo-native-cell[data-stale="true"], .marimo-native-cell[data-cell-status="stale"]'))
+      .map(row=>codes.get(row.dataset.cellId??''))
+      .filter((cell): cell is Cell=>cell!==undefined);
+  }
+  /**
+   * The kernel only reports `stale_inputs` in narrow cases; the edit that makes
+   * a cell out of date happens in this editor, so it is tracked here. A cell-op
+   * that reports execution clears the mark again.
+   */
+  private markCellStale(cellId:string):void {
+    const row=this.rowFor(cellId);
+    if(!row||row.dataset.stale==='true')return;
+    row.dataset.stale='true';
+    this.refreshStaleButton();
+  }
+  private refreshStaleButton():void {
+    if(!this.staleButton)return;
+    this.staleButton.disabled=!toolbarAvailability({connection:this.connection(),run:this.runPhase,ready:this.notebookReady,hasDraft:this.hasDraft,stopping:this.stopping,busy:this.busy,hasStale:this.hasStaleCells()}).runStale;
   }
 
   /** Structural actions depend on the cell's position, so they are set per row. */
@@ -196,7 +234,13 @@ export class MarimoView extends EditableFileView {
     this.connectButton.addClass('mod-cta');
     this.addButton = this.createAction('add-cell', this.plugin.t('新增单元格','Add cell'), 'plus', false, () => void this.insertAfter(this.selectedId));
     this.runButton = this.createAction('run-all', this.plugin.t('运行全部','Run all'), 'play', true, () => void this.perform('run', this.readCells()));
+    this.staleButton = this.createAction('run-stale', this.plugin.t('运行陈旧','Run stale'), 'refresh-cw', false, () => void this.runStale());
+    this.staleButton.setAttr('aria-label', this.plugin.t('运行输入已变化的单元格','Run cells with stale inputs'));
+    this.staleButton.setAttr('title', this.plugin.t('运行输入已变化的单元格','Run cells with stale inputs'));
     this.saveButton = this.createAction('save', this.plugin.t('保存','Save'), 'save', false, () => void this.perform('save', this.readCells()));
+    this.formatButton = this.createAction('format', this.plugin.t('格式化','Format'), 'sparkles', false, () => void this.formatCells());
+    this.formatButton.setAttr('aria-label', this.plugin.t('用 ruff 格式化全部单元格','Format all cells with ruff'));
+    this.formatButton.setAttr('title', this.plugin.t('用 ruff 格式化全部单元格','Format all cells with ruff'));
     this.interruptButton = this.createAction('interrupt', this.plugin.t('中断运行','Interrupt run'), 'circle-stop', true, () => void this.interrupt());
     this.interruptButton.hidden = true;
     this.stopButton = this.createAction('stop', this.plugin.t('停止并断开','Stop and disconnect'), 'square', false, () => void this.stop());
@@ -218,6 +262,19 @@ export class MarimoView extends EditableFileView {
     this.body = this.contentEl.createDiv({cls:'marimo-native-cells'});
 
     this.refreshEnvironment();
+    // Obsidian's editor keymap claims Mod-Enter before CodeMirror sees it, so the
+    // shortcut is registered on a scope of our own. The scope stays pushed while
+    // the view exists but only acts when this view is the active one.
+    const scope=new Scope(this.app.scope);
+    scope.register(['Mod'],'Enter',()=>{
+      if(this.closed||this.app.workspace.getActiveViewOfType(MarimoView)!==this)return true;
+      const cellId=document.activeElement?.closest<HTMLElement>('.marimo-native-cell')?.dataset.cellId;
+      if(!cellId)return true;
+      void this.runCell(cellId);
+      return false;
+    });
+    this.app.keymap.pushScope(scope);
+    this.keyScope=scope;
     this.updateControls();
   }
 
@@ -467,6 +524,9 @@ export class MarimoView extends EditableFileView {
   }
 
   private renderCell(cell:Cell, readOnly:boolean): HTMLElement {
+    const config=readCellConfig(cell.config);
+    cell.config=config;
+    const presentation=cellPresentation(config);
     const row=this.body.createDiv({cls:'marimo-native-cell'});
     row.dataset.cellId = cell.id;
     row.addEventListener('pointerdown',()=>this.selectCell(cell.id));
@@ -476,20 +536,32 @@ export class MarimoView extends EditableFileView {
     const run=gutter.createEl('button',{cls:'marimo-native-run'});
     run.dataset.action='run-cell';
     run.hidden=readOnly;
+    // A disabled cell can be edited but never executed; the kernel would skip it.
+    run.disabled=presentation.disabled;
     run.setAttr('aria-label',this.plugin.t('运行此块','Run this cell'));
     run.setAttr('title',this.plugin.t('运行此块','Run this cell'));
     setIcon(run,'play');
-    run.onclick=()=>void this.perform('run',this.readCells().filter(item=>item.id===cell.id));
+    run.onclick=()=>void this.runCell(cell.id);
 
     const content=row.createDiv({cls:'marimo-native-cell-content'});
     const host=content.createDiv({cls:'marimo-native-editor'});
     const editable=new Compartment();
-    const editor=new EditorView({parent:host,state:EditorState.create({doc:cell.code,extensions:[editable.of([EditorState.readOnly.of(readOnly),EditorView.editable.of(!readOnly)]),python(),lineNumbers(),highlightActiveLine(),highlightActiveLineGutter(),history(),keymap.of([...defaultKeymap,...historyKeymap]),syntaxHighlighting(nativeHighlight),EditorView.lineWrapping,EditorView.updateListener.of(update=>{
+    const editor=new EditorView({parent:host,state:EditorState.create({doc:cell.code,extensions:[editable.of([EditorState.readOnly.of(readOnly),EditorView.editable.of(!readOnly)]),python(),lineNumbers(),highlightActiveLine(),highlightActiveLineGutter(),history(),
+      // Notebook gestures come before the default keymap so Shift-Enter runs
+      // instead of inserting a newline.
+      keymap.of([
+        {key:'Mod-Enter', run:()=>{void this.runCell(cell.id);return true;}},
+        {key:'Shift-Enter', run:()=>{void this.runCellAndAdvance(cell.id);return true;}},
+      ]),
+      autocompletion({override:[context=>this.completeAt(cell.id,context)],activateOnTyping:true}),
+      keymap.of([...defaultKeymap,...historyKeymap]),syntaxHighlighting(nativeHighlight),EditorView.lineWrapping,EditorView.updateListener.of(update=>{
       if(update.focusChanged&&update.view.hasFocus)this.selectCell(cell.id);
       if(update.docChanged){
         this.dirty=true;
         if(this.runPhase!=='none')this.changedSinceRun=true;
         this.updateStatus();
+        // The code no longer matches what the kernel executed.
+        this.markCellStale(cell.id);
       }
     }),EditorView.theme({'&':{fontFamily:'var(--font-monospace)',fontSize:'var(--code-size)'},'.cm-content':{caretColor:'var(--text-normal)'},'.cm-gutters':{backgroundColor:'transparent',color:'var(--text-faint)',border:'none'},'&.cm-focused':{outline:'none'}})]})});
     this.editors.set(cell.id,{view:editor,editable});
@@ -499,22 +571,87 @@ export class MarimoView extends EditableFileView {
       this.cellAction(actions,'cell-insert','plus',this.plugin.t('在下方插入单元格','Insert cell below'),() => void this.insertAfter(cell.id));
       this.cellAction(actions,'cell-up','arrow-up',this.plugin.t('上移','Move up'),() => this.shiftCell(cell.id,-1));
       this.cellAction(actions,'cell-down','arrow-down',this.plugin.t('下移','Move down'),() => this.shiftCell(cell.id,1));
+      this.cellAction(actions,'cell-config','more-horizontal',this.plugin.t('单元格设置','Cell settings'),(event) => this.toggleCellMenu(event.currentTarget as HTMLElement,cell.id));
       this.cellAction(actions,'cell-remove','trash-2',this.plugin.t('删除此单元格','Delete this cell'),() => void this.deleteCell(cell.id));
     }
     const output=content.createDiv({cls:'marimo-native-output markdown-rendered'});
     output.createDiv({cls:'marimo-native-display'});
     output.createDiv({cls:'marimo-native-console'});
     this.outputs.set(cell.id,output);
+    this.applyCellConfig(row,cell.id);
     return row;
   }
 
-  private cellAction(parent:HTMLElement, action:string, icon:string, label:string, onClick:()=>void):HTMLButtonElement {
+  /** Reflect one cell's config onto its row without rebuilding the editor. */
+  private applyCellConfig(row:HTMLElement, cellId:string): void {
+    const cell=this.cells.find(item=>item.id===cellId);
+    const presentation=cellPresentation(readCellConfig(cell?.config));
+    row.toggleClass('is-disabled',presentation.disabled);
+    row.toggleClass('is-code-hidden',presentation.hideCode);
+    row.toggleClass('is-output-clamped',presentation.clampOutput);
+    const run=row.querySelector<HTMLButtonElement>('button[data-action="run-cell"]');
+    // `updateControls` owns the rest of the availability rules.
+    if(run)run.disabled=presentation.disabled;
+    // CodeMirror measures on its own, but a hidden host has a zero size.
+    if(!presentation.hideCode)this.editors.get(cellId)?.view.requestMeasure();
+  }
+
+  /**
+   * The cell menu is a small popover of our own rather than `Menu`: the host
+   * menu is drawn by a native layer, which makes it impossible to verify and
+   * leaves the notebook with two visual languages.
+   */
+  private toggleCellMenu(button:HTMLElement, cellId:string): void {
+    if(this.cellMenu?.dataset.cellId===cellId){this.closeCellMenu();return;}
+    this.closeCellMenu();
+    const row=this.rowFor(cellId);
+    const cell=this.cells.find(item=>item.id===cellId);
+    if(!row||!cell)return;
+    const config=readCellConfig(cell.config);
+    const menu=row.createDiv({cls:'marimo-native-cell-menu'});
+    menu.dataset.cellId=cellId;
+    menu.setAttribute('role','menu');
+    menu.setAttribute('aria-label',this.plugin.t('单元格设置','Cell settings'));
+    const item=(action:string, icon:string, label:string, onClick:()=>void) => {
+      const entry=menu.createEl('button',{cls:'marimo-native-cell-menu-item'});
+      entry.dataset.menuAction=action;
+      entry.setAttribute('role','menuitem');
+      setIcon(entry,icon);
+      entry.createSpan({text:label});
+      entry.onclick=event=>{event.stopPropagation();this.closeCellMenu();onClick();};
+      return entry;
+    };
+    item('hide-code',config.hideCode?'eye':'eye-off',config.hideCode?this.plugin.t('显示代码','Show code'):this.plugin.t('隐藏代码','Hide code'),()=>void this.setCellConfig(cellId,{hideCode:!config.hideCode}));
+    item('toggle-disabled','power',config.disabled?this.plugin.t('启用此单元格','Enable this cell'):this.plugin.t('禁用此单元格','Disable this cell'),()=>void this.setCellConfig(cellId,{disabled:!config.disabled}));
+    item('toggle-expand',config.expandOutput?'minimize-2':'maximize-2',config.expandOutput?this.plugin.t('折叠输出','Collapse output'):this.plugin.t('展开输出','Expand output'),()=>void this.setCellConfig(cellId,{expandOutput:!config.expandOutput}));
+    this.cellMenu=menu;
+    // A later interaction elsewhere closes it; this click is already finished.
+    this.menuDismiss=(event:Event)=>{if(!menu.contains(event.target as Node))this.closeCellMenu();};
+    document.addEventListener('pointerdown',this.menuDismiss,{capture:true});
+    document.addEventListener('keydown',this.menuKey,{capture:true});
+    // The button stays the visual anchor even when the row is scrolled.
+    button.setAttribute('aria-expanded','true');
+  }
+
+  private closeCellMenu(): void {
+    if(this.menuDismiss){document.removeEventListener('pointerdown',this.menuDismiss,{capture:true});this.menuDismiss=null;}
+    document.removeEventListener('keydown',this.menuKey,{capture:true});
+    this.cellMenu?.parentElement?.querySelectorAll<HTMLElement>('[data-action="cell-config"]').forEach(button=>button.setAttribute('aria-expanded','false'));
+    this.cellMenu?.remove();
+    this.cellMenu=null;
+  }
+
+  private menuKey=(event:KeyboardEvent):void => {
+    if(event.key==='Escape'){event.stopPropagation();this.closeCellMenu();}
+  };
+
+  private cellAction(parent:HTMLElement, action:string, icon:string, label:string, onClick:(event:MouseEvent)=>void):HTMLButtonElement {
     const button=parent.createEl('button',{cls:'marimo-native-cell-action'});
     button.dataset.action=action;
     button.setAttr('aria-label',label);
     button.setAttr('title',label);
     setIcon(button,icon);
-    button.onclick=event=>{event.stopPropagation();onClick();};
+    button.onclick=event=>{event.stopPropagation();onClick(event);};
     return button;
   }
 
@@ -636,6 +773,104 @@ export class MarimoView extends EditableFileView {
     this.editors.get(cellId)?.view.focus();
   }
 
+  // ------------------------------------------------- running & cell config
+
+  private runCell(cellId:string):Promise<void> {
+    const row=this.rowFor(cellId);
+    // A disabled cell is skipped by the kernel anyway; do not pretend to run it.
+    if(!row||row.classList.contains('is-disabled'))return Promise.resolve();
+    const cell=this.readCells().find(item=>item.id===cellId);
+    return cell?this.perform('run',[cell]):Promise.resolve();
+  }
+
+  /** Shift-Enter: run this cell and keep writing in the next one. */
+  private runCellAndAdvance(cellId:string):void {
+    const next=nextCellId(this.cells,cellId);
+    void this.runCell(cellId);
+    if(next&&!this.closed)this.editors.get(next)?.view.focus();
+  }
+
+  private async runStale():Promise<void> {
+    const cells=this.staleCells();
+    if(!cells.length)return;
+    await this.perform('run',cells);
+  }
+
+  /**
+   * A config write is a reactive cycle, so it owns the session like a run does.
+   * The config is stored locally only after the kernel accepts it; `save()` reads
+   * it from there, which is how `hide_code` and friends reach the file.
+   */
+  private async setCellConfig(cellId:string, patch:Partial<CellConfig>):Promise<void> {
+    const backend=this.backend;
+    if(!backend||!this.canEditStructure())return;
+    const cell=this.cells.find(item=>item.id===cellId);
+    if(!cell)return;
+    const config=mergeCellConfig(readCellConfig(cell.config),patch);
+    const operation=++this.operation;
+    this.busy=true;this.updateControls();
+    try {
+      await backend.request('config',{cellId,config:wireConfig(config)});
+      if(!shouldApplyResult({backend,operation},{backend:this.backend,operation:this.operation}))return;
+      cell.config=config;
+      // The setting is written into the file on save.
+      this.dirty=true;
+      const row=this.rowFor(cellId);
+      if(row)this.applyCellConfig(row,cellId);
+      this.updateStatus();
+    } catch(error) {
+      this.structureFailed(backend,operation,error);
+    } finally {
+      if(operation===this.operation){this.busy=false;if(!this.closed)this.updateControls();}
+    }
+  }
+
+  /** Rewrite every cell with the server's formatter; the kernel is untouched. */
+  private async formatCells():Promise<void> {
+    const backend=this.backend;
+    if(!backend||!this.canEditStructure()||!this.cells.length)return;
+    const codes:Record<string,string>={};
+    for(const cell of this.cells)codes[cell.id]=this.editors.get(cell.id)?.view.state.doc.toString()??cell.code;
+    const operation=++this.operation;
+    this.busy=true;this.updateControls();
+    try {
+      const result=await backend.request('format',{codes});
+      if(!shouldApplyResult({backend,operation},{backend:this.backend,operation:this.operation}))return;
+      let changed=false;
+      for(const [id,code] of Object.entries(result.codes??{})) {
+        const editor=this.editors.get(id);
+        if(!editor)continue;
+        const current=editor.view.state.doc.toString();
+        if(current===code)continue;
+        // Replacing the document keeps the undo history instead of rebuilding it.
+        editor.view.dispatch({changes:{from:0,to:current.length,insert:code}});
+        changed=true;
+      }
+      if(changed){this.dirty=true;if(this.runPhase!=='none')this.changedSinceRun=true;this.updateStatus();}
+    } catch(error) {
+      this.structureFailed(backend,operation,error);
+    } finally {
+      if(operation===this.operation){this.busy=false;if(!this.closed)this.updateControls();}
+    }
+  }
+
+  /**
+   * Language-server completions. The kernel answers on the socket, so this is
+   * async; a slow or empty answer must never break typing.
+   */
+  private async completeAt(cellId:string, context:CompletionContext):Promise<CompletionResult|null> {
+    const backend=this.backend;
+    if(!backend||this.closed||this.busy||this.connecting)return null;
+    const word=context.matchBefore(/[\w.]*/);
+    if(!word||(word.from===word.to&&!context.explicit))return null;
+    try {
+      const result=await backend.request('complete',{cellId,document:context.state.sliceDoc(0,context.pos)});
+      const options=(result.options??[]).map(option=>({label:option.name,type:option.type||undefined,detail:option.info||undefined}));
+      if(!options.length||this.closed)return null;
+      return {from:Math.max(0,context.pos-(result.prefixLength??0)),options};
+    } catch { return null; }
+  }
+
   /**
    * Make the live notebook match `target`: drop what the target lacks, recreate
    * cells whose ids died with an earlier kernel, and keep the target's order.
@@ -647,7 +882,9 @@ export class MarimoView extends EditableFileView {
     for(const cell of current) if(!targetIds.has(cell.id)) await backend.request('delete',{cellId:cell.id});
     const resolved:Cell[]=[];
     for(const cell of target) {
-      if(currentIds.has(cell.id)) {resolved.push({id:cell.id,code:cell.code}); continue;}
+      // A surviving cell keeps its config; a recreated kernel cell starts from
+      // marimo's defaults, which is what the kernel actually knows.
+      if(currentIds.has(cell.id)) {resolved.push({id:cell.id,code:cell.code,config:cell.config}); continue;}
       const created=await backend.request('create');
       if(!created.cellId)throw new Error(this.plugin.t('适配层未返回单元格标识','The adapter did not return a cell id'));
       resolved.push({id:created.cellId,code:cell.code});
@@ -735,6 +972,9 @@ export class MarimoView extends EditableFileView {
     const row=this.body.querySelector<HTMLElement>(`.marimo-native-cell[data-cell-id="${CSS.escape(cellId)}"]`);
     if(!row)return;
     row.dataset.cellStatus=status;
+    // Any cycle that reaches the cell executed (or restored) it, so the local
+    // "edited since run" mark no longer applies.
+    if(status==='running'||status==='queued'||status==='idle') delete row.dataset.stale;
     const run=row.querySelector<HTMLElement>('button[data-action="run-cell"]');
     if(run && !run.hidden) setIcon(run, status==='running'?'loader-2':'play');
   }
@@ -836,6 +1076,7 @@ export class MarimoView extends EditableFileView {
   }
   onClose():Promise<void> {
     if(this.closing)return this.closing;
+    if(this.keyScope){this.app.keymap.popScope(this.keyScope);this.keyScope=null;}
     this.closed=true;this.loadGeneration++;this.inspection?.abort();
     this.closing=this.releaseFileSession();return this.closing;
   }

@@ -4,11 +4,11 @@ import {stopOwnedProcess} from './process-lifecycle';
 import {decodeMessage, type BackendMessage, type Cell, type RequestResult} from './protocol';
 import backendSource from '../python/backend.py';
 
-export type RequestMethod = 'run' | 'save' | 'create' | 'delete' | 'interrupt' | 'stdin' | 'ui';
+export type RequestMethod = 'run' | 'save' | 'create' | 'delete' | 'interrupt' | 'stdin' | 'ui' | 'config' | 'format' | 'complete';
 
 export interface RequestPayload {
   cells?: Cell[];
-  /** Cell to remove. */
+  /** Cell to remove, configure or complete inside. */
   cellId?: string;
   /** Initial code for a new cell. */
   code?: string;
@@ -18,6 +18,12 @@ export interface RequestPayload {
   objectId?: string;
   /** New widget value, already normalised to the shape its element expects. */
   widgetValue?: unknown;
+  /** Partial cell config in wire form (snake_case flags). */
+  config?: Record<string, unknown>;
+  /** Code per cell for the formatter. */
+  codes?: Record<string, string>;
+  /** Source up to the cursor for completion. */
+  document?: string;
 }
 
 export class Backend {
@@ -48,7 +54,7 @@ export class Backend {
           if (frame.type === 'error') fail(new Error(frame.error));
           if (frame.type === 'result') {
             const pending = this.pending.get(frame.id);
-            if (pending) {clearTimeout(pending.timer); this.pending.delete(frame.id); frame.error ? pending.reject(new Error(frame.error)) : pending.resolve({cellId: frame.cellId});}
+            if (pending) {clearTimeout(pending.timer); this.pending.delete(frame.id); frame.error ? pending.reject(new Error(frame.error)) : pending.resolve({cellId: frame.cellId, codes: frame.codes, options: frame.options, prefixLength: frame.prefixLength});}
           }
           this.onMessage(frame);
         } catch (error) {fail(new Error('Invalid marimo adapter response'));this.onMessage({type:'error',error:'Invalid marimo adapter response; reconnect'});void this.close();}
@@ -59,16 +65,20 @@ export class Backend {
   request(method: RequestMethod, payload: RequestPayload = {}): Promise<RequestResult> {
     if (this.closed || !this.process || this.process.exitCode !== null) return Promise.reject(new Error('Session is not connected'));
     const id = String(++this.serial);
-    // Run/save/delete/widget wait for a whole reactive cycle; the rest must answer fast.
-    const long = method === 'run' || method === 'save' || method === 'delete' || method === 'ui';
+    // Runs, saves, deletes, widget and config writes wait for a whole reactive
+    // cycle; the rest must answer fast.
+    const long = method === 'run' || method === 'save' || method === 'delete' || method === 'ui' || method === 'config';
     const frame: Record<string, unknown> = {id, method};
     if (method === 'run' || method === 'save') frame.cells = payload.cells ?? [];
     else if (method === 'create') frame.code = payload.code ?? '';
     else if (method === 'delete') frame.cellId = payload.cellId ?? '';
     else if (method === 'stdin') frame.value = payload.value ?? '';
     else if (method === 'ui') {frame.objectId = payload.objectId ?? ''; frame.value = payload.widgetValue ?? null;}
+    else if (method === 'config') {frame.cellId = payload.cellId ?? ''; frame.config = payload.config ?? {};}
+    else if (method === 'format') frame.codes = payload.codes ?? {};
+    else if (method === 'complete') {frame.cellId = payload.cellId ?? ''; frame.document = payload.document ?? '';}
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {this.pending.delete(id); reject(new Error(`${method} timed out; session stopped`)); this.close();}, long ? 120_000 : 15_000);
+      const timer = setTimeout(() => {this.pending.delete(id); reject(new Error(`${method} timed out; session stopped`)); this.close();}, long ? 120_000 : 20_000);
       this.pending.set(id, {resolve, reject, timer});
       this.process!.stdin.write(JSON.stringify(frame)+'\n', error => {if(error) {clearTimeout(timer); this.pending.delete(id); reject(error);}});
     });

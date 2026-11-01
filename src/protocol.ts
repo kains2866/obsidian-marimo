@@ -1,12 +1,29 @@
-export interface Cell {id: string; code: string}
+export interface Cell {
+  id: string;
+  code: string;
+  /** Missing until the session reports it; defaults apply otherwise. */
+  config?: unknown;
+}
 export type BackendMessage =
   | {type: 'ready'; cells: Cell[]}
   | {type: 'event'; data: Record<string, unknown>}
-  | {type: 'result'; id: string; error?: string; cellId?: string}
+  | {type: 'result'; id: string; error?: string; cellId?: string; codes?: Record<string, string>; options?: CompletionOption[]; prefixLength?: number}
   | {type: 'error'; error: string};
 
-/** Data a successful request may return; `create` answers with the new id. */
-export interface RequestResult {cellId?: string}
+/** One language-server suggestion; `info` is already flattened to text. */
+export interface CompletionOption {name: string; type: string; info: string}
+
+/** Data a successful request may return. */
+export interface RequestResult {
+  /** `create` answers with the new id. */
+  cellId?: string;
+  /** `format` answers with the rewritten code per cell. */
+  codes?: Record<string, string>;
+  /** `complete` answers with the options the language server returned. */
+  options?: CompletionOption[];
+  /** Characters before the cursor the accepted option replaces. */
+  prefixLength?: number;
+}
 
 export function decodeMessage(line: string): BackendMessage {
   const value: unknown = JSON.parse(line);
@@ -18,6 +35,16 @@ export function decodeMessage(line: string): BackendMessage {
   if (frame.type === 'result' && typeof frame.id === 'string' && (frame.error === undefined || typeof frame.error === 'string')) {
     // An empty id would silently address the wrong cell; reject it here.
     if (frame.cellId !== undefined && (typeof frame.cellId !== 'string' || !frame.cellId)) throw new Error('Invalid backend message');
+    // A malformed formatter answer could overwrite code with `undefined`.
+    if (frame.codes !== undefined) {
+      const codes = frame.codes;
+      if (!codes || typeof codes !== 'object' || Array.isArray(codes)) throw new Error('Invalid backend message');
+      for (const code of Object.values(codes as Record<string, unknown>)) if (typeof code !== 'string') throw new Error('Invalid backend message');
+    }
+    if (frame.options !== undefined) {
+      if (!Array.isArray(frame.options) || !frame.options.every(option => option && typeof option.name === 'string')) throw new Error('Invalid backend message');
+    }
+    if (frame.prefixLength !== undefined && (typeof frame.prefixLength !== 'number' || frame.prefixLength < 0)) throw new Error('Invalid backend message');
     return frame as unknown as BackendMessage;
   }
   if (frame.type === 'error' && typeof frame.error === 'string') return frame as unknown as BackendMessage;

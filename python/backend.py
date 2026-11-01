@@ -23,6 +23,9 @@ SUPPORTED_VERSION = "0.25.2"
 
 # marimo's own defaults for a freshly created cell; codegen needs them on save.
 DEFAULT_CONFIG = {"column": None, "disabled": False, "hide_code": False, "expand_output": False}
+CELL_CONFIG_KEYS = set(DEFAULT_CONFIG)
+# A single completion answer is a UI list; anything larger is not a menu.
+COMPLETION_LIMIT = 50
 
 
 class ServerTokenParser(HTMLParser):
@@ -279,6 +282,134 @@ class NativeSession:
             await self.close()
             raise
 
+    def _config_cell(self, cell_id):
+        if not isinstance(cell_id, str) or not cell_id:
+            raise ValueError("A cell id is required")
+        cell = next((item for item in self.cells if item["id"] == cell_id), None)
+        if cell is None:
+            raise ValueError("Unknown cell")
+        return cell
+
+    async def set_cell_config(self, cell_id, updates):
+        """Apply a partial config to one cell and consume the cycle it triggers.
+
+        marimo always closes the resulting command with `completed-run`, even
+        when nothing is stale, so the caller owns exactly one cycle afterwards.
+        The local copy is only updated once the kernel has accepted the change;
+        `save()` takes its configs from that copy, which is how `hide_code`,
+        `disabled` and `column` end up in the file.
+        """
+        if self.closed:
+            raise RuntimeError("Session stopped; reconnect before changing a cell")
+        cell = self._config_cell(cell_id)
+        if not isinstance(updates, dict) or not updates:
+            raise ValueError("A cell config update is required")
+        if set(updates) - CELL_CONFIG_KEYS:
+            raise ValueError("Unsupported cell config")
+        merged = dict(cell["config"])
+        for key, value in updates.items():
+            if key == "column":
+                # `bool` is an `int` in Python; a column of `True` must not pass.
+                if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+                    raise ValueError("A column must be an integer or None")
+            elif not isinstance(value, bool):
+                raise ValueError("A cell config flag must be a boolean")
+            merged[key] = value
+        try:
+            async with self._cycle_lock:
+                if self.closed:
+                    raise RuntimeError("Session stopped; reconnect before changing a cell")
+                await asyncio.to_thread(
+                    self._request,
+                    "/api/kernel/set_cell_config",
+                    {"configs": {cell_id: updates}},
+                )
+                events = await self._collect_run()
+                cell["config"] = merged
+                return events
+        except BaseException:
+            await self.close()
+            raise
+
+    async def format_cells(self, codes, line_length=88):
+        """Format code with the server's formatter (ruff).
+
+        Pure server call: no reactive cycle, no kernel state change. The answer
+        is compiled per cell so a broken formatter can never replace working code.
+        """
+        if self.closed:
+            raise RuntimeError("Session stopped; reconnect before formatting")
+        known = {cell["id"] for cell in self.cells}
+        if not isinstance(codes, dict) or not codes:
+            raise ValueError("Formatting requires at least one cell")
+        if not set(codes) <= known:
+            raise ValueError("Unknown cell")
+        if any(not isinstance(code, str) for code in codes.values()):
+            raise ValueError("Cell code must be text")
+        if isinstance(line_length, bool) or not isinstance(line_length, int) or not 20 <= line_length <= 200:
+            raise ValueError("Line length must be between 20 and 200")
+        body = await asyncio.to_thread(
+            self._request,
+            "/api/kernel/format",
+            {"codes": codes, "lineLength": line_length},
+        )
+        payload = json.loads(body) if body else {}
+        formatted = payload.get("codes") if isinstance(payload, dict) else None
+        if not isinstance(formatted, dict) or set(formatted) - set(codes):
+            raise RuntimeError("Invalid formatter response")
+        for code in formatted.values():
+            if not isinstance(code, str):
+                raise RuntimeError("Invalid formatter response")
+            try:
+                compile(code, "<cell>", "exec")
+            except SyntaxError as error:
+                raise RuntimeError("Formatter returned invalid Python") from error
+        return formatted
+
+    async def complete(self, cell_id, document, timeout=6.0):
+        """Ask the kernel's language server for completions at the cursor.
+
+        The HTTP call only acknowledges; the options arrive on the websocket as
+        `completion-result` tagged with our request id. Any other event seen while
+        waiting is published normally so an unprompted cycle is never swallowed.
+        A missing answer is not fatal: an empty list keeps the editor usable.
+        """
+        if self.closed:
+            raise RuntimeError("Session stopped; reconnect before completing")
+        self._config_cell(cell_id)
+        if not isinstance(document, str):
+            raise ValueError("Completion requires the document text")
+        request_id = "native-" + secrets.token_hex(4)
+        async with self._cycle_lock:
+            if self.closed:
+                raise RuntimeError("Session stopped; reconnect before completing")
+            await asyncio.to_thread(
+                self._request,
+                "/api/kernel/code_autocomplete",
+                {"id": request_id, "document": document, "cellId": cell_id},
+            )
+            while True:
+                try:
+                    event = await asyncio.wait_for(self._next_event(), timeout)
+                except (asyncio.TimeoutError, TimeoutError):
+                    return {"prefixLength": 0, "options": []}
+                if event.get("op") == "completion-result" and event.get("completion_id") == request_id:
+                    options = []
+                    for option in event.get("options") or []:
+                        if not isinstance(option, dict) or not isinstance(option.get("name"), str):
+                            continue
+                        options.append(
+                            {
+                                "name": option["name"],
+                                "type": option.get("type") if isinstance(option.get("type"), str) else "",
+                                "info": option.get("completion_info") if isinstance(option.get("completion_info"), str) else "",
+                            }
+                        )
+                        if len(options) >= COMPLETION_LIMIT:
+                            break
+                    prefix = event.get("prefix_length")
+                    return {"prefixLength": prefix if isinstance(prefix, int) else 0, "options": options}
+                self.on_event(event)
 
     async def save(self, cells):
         self._validate_cells(cells, all_cells=True)
@@ -377,6 +508,16 @@ async def serve(filename):
                 await session.save(request["cells"])
             elif method == "ui":
                 await session.set_ui_element(request.get("objectId"), request.get("value"))
+            elif method == "config":
+                await session.set_cell_config(request.get("cellId"), request.get("config"))
+            elif method == "format":
+                codes = await session.format_cells(request.get("codes") or {}, request.get("lineLength", 88))
+                emit({"type": "result", "id": request_id, "codes": codes})
+                return
+            elif method == "complete":
+                answer = await session.complete(request.get("cellId"), request.get("document", ""))
+                emit({"type": "result", "id": request_id, "prefixLength": answer["prefixLength"], "options": answer["options"]})
+                return
             else:
                 await session.delete(request.get("cellId"))
             emit({"type": "result", "id": request_id})
@@ -409,7 +550,7 @@ async def serve(filename):
                 request = json.loads(line)
                 request_id = str(request["id"])
                 method = request["method"]
-                if method in ("run", "save", "delete", "ui"):
+                if method in ("run", "save", "delete", "ui", "config", "format", "complete"):
                     running = asyncio.create_task(handle_run(request, request_id))
                     pending.add(running)
                     running.add_done_callback(pending.discard)

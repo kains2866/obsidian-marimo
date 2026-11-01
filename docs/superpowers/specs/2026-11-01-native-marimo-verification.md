@@ -138,3 +138,18 @@ WorkBuddy 对安装源码进行了独立只读调查，提供了路由、通知�
 证据：`assets/verify-ui-elements.py`、`ui-elements-verification.json`、`ui5-widgets-light.png`、`ui5-widgets-dark.png`；fixture 用后移入回收站，Temp 回到 demo 只读预览、无后台进程。测试：`tests/ui-elements.test.ts`（属性解码、抽取、标签、选项、表格、值形状）、`tests/test_widgets.py`（真实内核回写 4 项）。Node 81 项、Python 51 项全部通过；typecheck/build 通过；dist 三文件与 Temp 安装 sha256 一致。
 
 本轮仍未验证：plotly/altair 等富交互输出、表格选择回写、`mo.ui.refresh`、Windows/Linux；多列布局（`column`）仍未渲染。
+
+## 单元格能力（P1）
+
+结论：`/api/kernel/set_cell_config` 每次调用都恰好关闭一轮 `completed-run`（即使没有任何单元格变得陈旧），因此适配层与控件回写同样在周期锁内等待；`disabled` 会让下游收到 `disabled-transitively`，重新启用只把下游恢复为 `idle` 并保留其上次的值（不会自动重跑）。内核几乎不会主动推送 `stale_inputs`——它只在 `autoRun=false` 的实例化等场景出现——因此"陈旧"由视图在代码变化时本地标记、在收到该单元格的执行状态时清除，这让"运行陈旧"对应真实场景（编辑过但未执行）。
+
+- 配置回写：`POST /api/kernel/set_cell_config`（`configs: {cellId: 部分配置}`），适配层校验键与类型（`column` 拒绝布尔值——Python 里 `bool` 是 `int`），本地配置仅在内核接受后更新；`save()` 从这份本地配置生成 payload，实测 `hide_code=True`、`column=0` 均能写入文件。
+- 格式化：`/api/kernel/format`（`codes` + `lineLength`）为纯服务调用，无周期；适配层对返回代码逐个 `compile`，坏 formatter 不会替换可用代码。视图用整段替换写回编辑器，保留撤销历史；格式化不执行代码，单元格保持"陈旧"。
+- 补全：`/api/kernel/code_autocomplete` 只确认请求，答案以 `completion-result`（按请求 id 匹配）出现在 WebSocket 上；适配层在周期锁内等待并转发无关事件，超时返回空列表（不关会话）。CodeMirror 以 `autocompletion({override})` 接入，实测输入 `import ma` 弹出含 marimo 的选项。
+- 快捷键：CodeMirror 键位映射覆盖 Shift+Enter；Cmd/Ctrl+Enter 会被 Obsidian 编辑器全局热键先行吞掉，必须注册在插件自己的 `Scope`（`app.keymap.pushScope`，仅当前视图激活时生效），`View` 本身没有 `scope` 属性。
+- 单元格菜单：宿主 `Menu` 在本环境完全不渲染（右键菜单也不出现），改为自绘行内 popover（点击外部/Escape 关闭）。
+- 宿主实证（`assets/verify-editing.py`，全部真实输入）：Cmd+Enter 运行（base 2 → doubled 4）、Shift+Enter 运行并聚焦下一格、编辑后出现本地陈旧标记且"运行陈旧"只跑该格（base 3 → doubled 6）、格式化把 `base    =   7` 规整为 `base = 7`、隐藏代码后编辑器高度为 0 且保存的文件含 `hide_code=True`、禁用后本格运行按钮禁用且下游 `data-cell-status="disabled"`、展开输出移除钳制、补全弹出 9 个含 marimo 的选项。截图 `ui6-editing-light.png`、`ui6-editing-dark.png`；证据 `editing-verification.json`。fixture 用后入回收站，Temp 回到 demo 只读预览、无后台进程。
+
+测试：`tests/cell-config.test.ts`（配置解析/合并/线格式/呈现）、`tests/test_editing.py`（真实内核：配置周期与保存、禁用语义、格式化校验、补全、关闭拒绝）、`tests/cells.test.ts`（nextCellId）、`tests/status.test.ts` 与 `tests/session-guard.test.ts`（runStale/format 可用性）。Node 89 项、Python 61 项全部通过；typecheck/build 通过；dist 与 Temp 安装 sha256 一致。
+
+本轮仍未验证：多列布局渲染、`hide_code` 单元格在未连接时的呈现、补全在长会话中的性能、Windows/Linux。

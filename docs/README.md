@@ -16,8 +16,8 @@ status: current
 | [原生设计](superpowers/specs/2026-11-01-native-marimo-design.md) | 已批准方向：独立 Obsidian 原生前端 + 固定版本 marimo 后端 | 已批准 |
 | [实施计划](superpowers/plans/2026-11-01-native-marimo-plan.md) | P0 任务拆分与阶段出口 | 进行中 |
 | [验证记录](superpowers/specs/2026-11-01-native-marimo-verification.md) | 已执行项、协议核对结论、未验证项 | 原型已验证，含未完成项 |
-| [UI 方案](superpowers/specs/2026-11-01-native-ui-design.md) | 工具栏、单元格、输出与状态的界面规范 | 已实施 |
-| [UI 分步计划](superpowers/plans/2026-11-01-native-ui-plan.md) | UI 改造的测试先行步骤与验收 | 已实施 |
+| [UI 方案](superpowers/specs/2026-11-01-native-ui-design.md) | 工具栏、单元格、输出与状态的界面规范 | 已实施（含会话守卫） |
+| [UI 分步计划](superpowers/plans/2026-11-01-native-ui-plan.md) | UI 改造的测试先行步骤与验收 | 已实施，全部子项已实测 |
 
 ## 历史：网页嵌入路线（已废弃，勿执行）
 

@@ -52,6 +52,19 @@ WorkBuddy 对安装源码进行了独立只读调查，提供了路由、通知�
 
 - 2026-11-01：记录真实协议和Temp宿主验证，保留未通过/未验证项。
 
+## 界面完善第二轮（参考 ipynb 样式）
+
+针对「焦点环 / 活动行 / 错误色 / 单元格状态 / 提示收纳」五项的原生宿主实证（专用 fixture，不改用户 demo）：
+
+- 连接、运行（含故意 ValueError）、停止全部通过；错误输出颜色实测等于主题 `--text-error`（浅/深两套主题均核对）。
+- 宿主实时观察到单元格 `running` 状态与 `lucide-loader-2` 旋转图标（sleep 1.2s 的单元格）；停止后无残留状态与图标。
+- 焦点环与活动行以真实鼠标点击验证（后台窗口无法获得 DOM 焦点，`view.focus()` 不可靠，须用受信输入事件）。
+- 期间发现并修复一个缺陷：连接重渲染单元格后选中态丢失，现已在重建后恢复。
+- 证据：`assets/verify-ui-polish.py`、`assets/ui-polish-verification.json`、`assets/ui2-light-connected.png`、`assets/ui2-dark-error.png`、`assets/ui2-narrow.png`。
+- 附带发现：连接时 marimo 可能创建 `<notebook>.py.json` 布局旁车文件；带布局文件时保存仍按既有规则拒绝。
+
+最终本机验证：Node 53 项、Python 32 项测试通过；typecheck/build 通过；`verify-native-opening.py` 全量回归通过；最新 dist 三文件与 Temp 安装目录 sha256 一致。
+
 ## 审查处理与补充实测
 
 使用 receiving-code-review 核对 WorkBuddy 返回的12项问题，未照搬存在技术风险的建议。

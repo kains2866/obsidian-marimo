@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {decodeMessage, safeOutput} from '../src/protocol.ts';
+import {decodeMessage, isErrorOutput, safeOutput} from '../src/protocol.ts';
 
 test('accepts ready cells without treating code as markup',()=>{
   const result=decodeMessage('{"type":"ready","cells":[{"id":"abc","code":"x = 2"}]}');
@@ -30,4 +30,17 @@ test('recognizes pre-rendered live marimo markdown output',()=>{
 
 test('traceback markup uses the same sanitization path as static HTML',()=>{
   assert.equal(safeOutput({mimetype:'application/vnd.marimo+traceback',data:'<pre>ValueError</pre>'}).kind,'html');
+});
+
+test('error channel and error mime types are recognized for error styling',()=>{
+  assert.equal(isErrorOutput({channel:'marimo-error',mimetype:'text/plain',data:'boom'}),true);
+  assert.equal(isErrorOutput({mimetype:'application/vnd.marimo+traceback',data:'<pre>Traceback</pre>'}),true);
+  assert.equal(isErrorOutput({mimetype:'application/vnd.marimo+error',data:[{msg:'x'}]}),true);
+});
+test('ordinary outputs are not mistaken for errors',()=>{
+  assert.equal(isErrorOutput({channel:'output',mimetype:'text/plain',data:'12'}),false);
+  assert.equal(isErrorOutput({mimetype:'text/html',data:'<b>12</b>'}),false);
+  assert.equal(isErrorOutput({mimetype:'text/markdown',data:'<p>hi</p>'}),false);
+  assert.equal(isErrorOutput(null),false);
+  assert.equal(isErrorOutput('text'),false);
 });

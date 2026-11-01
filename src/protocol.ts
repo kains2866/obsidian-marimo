@@ -28,3 +28,15 @@ export function safeOutput(value: unknown): {kind: 'text' | 'html' | 'unsupporte
   if (output.mimetype === 'text/html' || output.mimetype === 'text/markdown') return {kind: 'html', text: output.data};
   return {kind: 'unsupported', text: String(output.mimetype ?? '')};
 }
+
+/**
+ * True when an output (main or console) came from a failure, so the view can
+ * color it with the theme error tone. Covers the console error channel and the
+ * two error MIME types the pinned version emits.
+ */
+export function isErrorOutput(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const output = value as Record<string, unknown>;
+  if (output.channel === 'marimo-error') return true;
+  return output.mimetype === 'application/vnd.marimo+traceback' || output.mimetype === 'application/vnd.marimo+error';
+}

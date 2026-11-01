@@ -41,7 +41,10 @@ export default class MarimoPlugin extends Plugin {
     }));
     const plugin=this;
     this.addSettingTab(new class extends PluginSettingTab {
-      getSettingDefinitions(): SettingDefinitionItem[] {return [{name:plugin.t('点击 Python 文件打开','Open Python files on click'),desc:plugin.associationStatus+' '+plugin.t('更改后重新加载插件生效。','Changes take effect after reloading the plugin.'),control:{type:'toggle',key:'associatePython',defaultValue:true}},{name:plugin.t('marimo Python 路径','marimo Python path'),desc:plugin.t('须安装 marimo 0.25.2。原型暂不支持其他版本。','Requires marimo 0.25.2. Other versions are not supported by this prototype.'),control:{type:'text',key:'pythonPath',defaultValue:fallback}}];}
+      getSettingDefinitions(): SettingDefinitionItem[] {return [
+        {name:plugin.t('点击 Python 文件打开','Open Python files on click'),desc:plugin.associationStatus+' '+plugin.t('文件以只读预览打开，连接后才会执行代码。更改后重新加载插件生效。','Files open as a read-only preview; code only runs after you connect. Changes take effect after reloading the plugin.'),control:{type:'toggle',key:'associatePython',defaultValue:true}},
+        {name:plugin.t('marimo Python 路径','marimo Python path'),desc:plugin.t('须安装 marimo 0.25.2，其他版本会被拒绝。连接时仅在本机回环地址启动带认证的服务，断开或关闭页面即结束该进程。','Requires marimo 0.25.2; other versions are rejected. Connecting starts an authenticated loopback-only service that is stopped when you disconnect or close the view.'),control:{type:'text',key:'pythonPath',defaultValue:fallback}},
+      ];}
     }(this.app,this));
   }
   getPythonPath():string {const fallback=join(homedir(),'.local','share','uv','tools','marimo','bin','python');return normalizePython(this.settings.pythonPath,existsSync(fallback)?fallback:'python3');}

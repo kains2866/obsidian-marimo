@@ -620,13 +620,6 @@ export class MarimoView extends EditableFileView {
       this.markdownMode.add(cell.id);
       if(this.markdownSourceOpen.has(cell.id)) row.addClass('is-source-open');
     }
-    const preview=content.createDiv({cls:'marimo-native-markdown'});
-    preview.setAttr('aria-label',this.plugin.t('Markdown 单元格 · 点击编辑 Markdown','Markdown cell · click to edit markdown'));
-    if(markdown) {
-      this.markdownPreviews.set(cell.id,preview);
-      preview.addEventListener('click',()=>{this.openMarkdownSource(cell.id);});
-      void this.renderMarkdownPreview(cell.id,markdown.markdown);
-    }
     const host=content.createDiv({cls:'marimo-native-editor'});
     const editable=new Compartment();
     const editor=new EditorView({parent:host,state:EditorState.create({doc:markdown?markdown.markdown:cell.code,extensions:[editable.of([EditorState.readOnly.of(readOnly),EditorView.editable.of(!readOnly)]),python(),lineNumbers(),highlightActiveLine(),highlightActiveLineGutter(),history(),
@@ -666,6 +659,16 @@ export class MarimoView extends EditableFileView {
       this.cellAction(actions,'cell-down','arrow-down',this.plugin.t('下移','Move down'),() => this.shiftCell(cell.id,1));
       this.cellAction(actions,'cell-config','more-horizontal',this.plugin.t('单元格设置','Cell settings'),(event) => this.toggleCellMenu(event.currentTarget as HTMLElement,cell.id));
       this.cellAction(actions,'cell-remove','trash-2',this.plugin.t('删除此单元格','Delete this cell'),() => void this.deleteCell(cell.id));
+    }
+    // Native-marimo layout: the markdown you write sits on top, the live
+    // render follows underneath — the same top-to-bottom reading order as a
+    // code cell with its output.
+    const preview=content.createDiv({cls:'marimo-native-markdown'});
+    preview.setAttr('aria-label',this.plugin.t('Markdown 单元格 · 点击编辑 Markdown','Markdown cell · click to edit markdown'));
+    if(markdown) {
+      this.markdownPreviews.set(cell.id,preview);
+      preview.addEventListener('click',()=>{this.openMarkdownSource(cell.id);});
+      void this.renderMarkdownPreview(cell.id,markdown.markdown);
     }
     const output=content.createDiv({cls:'marimo-native-output markdown-rendered'});
     output.createDiv({cls:'marimo-native-display'});

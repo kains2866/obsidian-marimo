@@ -185,8 +185,8 @@
 
 /* ------------------------------------------------------- markdown cells */
 
-/* A markdown cell reads as prose: the preview leads, the Python source
-   stays folded until the reader asks for it. */
+/* A markdown cell reads as prose: the render leads, the editor stays folded
+   until the reader asks for it. */
 .marimo-native-markdown { padding: 2px 0; }
 .marimo-native-markdown:empty { display: none; }
 /* A cell that stopped being markdown shows only its kernel output. */
@@ -196,7 +196,16 @@
   border-radius: var(--radius-s);
   transition: background-color .12s ease;
 }
-.marimo-native-cell.is-markdown .marimo-native-markdown:hover { background: var(--background-modifier-hover); }
+.marimo-native-cell.is-markdown:not(.is-source-open) .marimo-native-markdown:hover { background: var(--background-modifier-hover); }
+/* While editing, the render reads as the cell's output region: the markdown
+   sits on top, the live result underneath — the native marimo order. */
+.marimo-native-cell.is-markdown.is-source-open .marimo-native-markdown {
+  margin: 6px 0 2px;
+  padding: 10px 14px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+}
 /* The kernel's copy is suppressed in code, so an empty output draws nothing. */
 .marimo-native-cell.is-markdown .marimo-native-output:not(.has-output) { display: none; }
 
@@ -204,9 +213,7 @@
 /* The source toggle only exists on markdown rows. */
 .marimo-native-cell:not(.is-markdown) button[data-action="cell-source"] { display: none; }
 .marimo-native-cell.is-markdown.is-source-open .marimo-native-editor {
-  border-left: 2px solid var(--background-modifier-border);
-  padding-left: 8px;
-  margin: 4px 0 6px;
+  margin: 4px 0 0;
 }
 
 /* The per-cell popover: same actions as the host menu, but ours to verify. */

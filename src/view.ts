@@ -11,7 +11,7 @@ import {cellPresentation, mergeCellConfig, readCellConfig, wireConfig, type Cell
 import {nativeHighlight} from './editor-theme';
 import {isErrorOutput, isStdinOutput, safeOutput, type BackendMessage, type Cell} from './protocol';
 import {isAllowedImageSource, adaptMarimoTex, isBlockedAttribute, isBlockedElement} from './output-policy';
-import {parseMarkdownCell} from './markdown-cell';
+import {encodeMarkdownCell, parseMarkdownCell} from './markdown-cell';
 import {canAdoptClaim, cellActions, connectionState, environmentLabel, normalizeCellStatus, shouldApplyResult, shouldApplyStopResult, showPrototypeInfo, statusView, toolbarAvailability, type CellStatus, type ConnectionState, type RunPhase} from './status';
 import {fileFromViewState} from './file-state';
 import {inspectSource} from './inspection';
@@ -81,6 +81,16 @@ export class MarimoView extends EditableFileView {
   private markdownPreviews = new Map<string, HTMLElement>();
   /** Markdown cells whose Python source the user explicitly opened. */
   private markdownSourceOpen = new Set<string>();
+  /**
+   * Markdown cells edit bare markdown: the CodeMirror document holds the text
+   * itself, and `encodeMarkdownCell` rebuilds the `mo.md(...)` call on write.
+   */
+  private markdownMode = new Set<string>();
+  /**
+   * Cells whose language the user pinned through the menu; the auto-detection
+   * that turns `mo.md("…")` typing into a markdown cell stays off for them.
+   */
+  private markdownLocked = new Set<string>();
   private markdownTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Guards `MarkdownRenderer.render` races: only the latest pass may paint. */
   private markdownSeqs = new Map<string, number>();
@@ -391,7 +401,22 @@ export class MarimoView extends EditableFileView {
     }
   }
 
-  private readCells(): Cell[] {return this.cells.map(cell => ({...cell, code:this.editors.get(cell.id)?.view.state.doc.toString() ?? cell.code}));}
+  /**
+   * The stored code of a cell given what its editor currently shows. Markdown
+   * cells hold bare markdown, so the `mo.md(...)` wrapper is rebuilt here —
+   * the .py file never sees raw markdown. Every funnel that turns editor
+   * state into `Cell.code` (save, run, draft, reorder) goes through this.
+   */
+  private cellCode(cellId:string, doc:string): string {
+    return this.markdownMode.has(cellId)?encodeMarkdownCell(doc):doc;
+  }
+
+  private readCells(): Cell[] {
+    return this.cells.map(cell => {
+      const doc=this.editors.get(cell.id)?.view.state.doc.toString();
+      return {...cell, code:doc===undefined?cell.code:this.cellCode(cell.id,doc)};
+    });
+  }
   private async perform(method: 'run'|'save', cells: Cell[]): Promise<void> {
     if(!this.backend || this.busy || this.closed || this.connecting) return;
     const backend=this.backend;const operation=++this.operation;
@@ -545,6 +570,9 @@ export class MarimoView extends EditableFileView {
     for(const editor of this.editors.values()) editor.view.destroy();
     this.editors.clear(); this.outputs.clear();
     this.markdownPreviews.clear(); this.markdownSourceOpen.clear(); this.markdownSeqs.clear();
+    // `markdownMode` is rebuilt per row below; `markdownLocked` is the user's
+    // explicit language choice and outlives re-renders.
+    this.markdownMode.clear();
     for(const timer of this.markdownTimers.values()) clearTimeout(timer);
     this.markdownTimers.clear();
     this.body.empty();
@@ -582,15 +610,18 @@ export class MarimoView extends EditableFileView {
     run.onclick=()=>void this.runCell(cell.id);
 
     const content=row.createDiv({cls:'marimo-native-cell-content'});
-    // A cell that is just `mo.md(<literal>)` is prose: Obsidian renders its
-    // markdown natively and the Python wrapper stays folded until asked for.
-    const markdown=this.plugin.settings.renderMarkdown?parseMarkdownCell(cell.code):null;
+    // A cell that is just `mo.md(<literal>)` is prose: the editor holds the
+    // bare markdown itself (like the marimo editor) and Obsidian renders it
+    // natively; the Python wrapper is rebuilt on write and never shown.
+    const markdown=this.plugin.settings.renderMarkdown
+      && !this.markdownLocked.has(cell.id) ?parseMarkdownCell(cell.code):null;
     if(markdown) {
       row.addClass('is-markdown');
+      this.markdownMode.add(cell.id);
       if(this.markdownSourceOpen.has(cell.id)) row.addClass('is-source-open');
     }
     const preview=content.createDiv({cls:'marimo-native-markdown'});
-    preview.setAttr('aria-label',this.plugin.t('Markdown 单元格 · 点击编辑源码','Markdown cell · click to edit source'));
+    preview.setAttr('aria-label',this.plugin.t('Markdown 单元格 · 点击编辑 Markdown','Markdown cell · click to edit markdown'));
     if(markdown) {
       this.markdownPreviews.set(cell.id,preview);
       preview.addEventListener('click',()=>{this.openMarkdownSource(cell.id);});
@@ -598,7 +629,7 @@ export class MarimoView extends EditableFileView {
     }
     const host=content.createDiv({cls:'marimo-native-editor'});
     const editable=new Compartment();
-    const editor=new EditorView({parent:host,state:EditorState.create({doc:cell.code,extensions:[editable.of([EditorState.readOnly.of(readOnly),EditorView.editable.of(!readOnly)]),python(),lineNumbers(),highlightActiveLine(),highlightActiveLineGutter(),history(),
+    const editor=new EditorView({parent:host,state:EditorState.create({doc:markdown?markdown.markdown:cell.code,extensions:[editable.of([EditorState.readOnly.of(readOnly),EditorView.editable.of(!readOnly)]),python(),lineNumbers(),highlightActiveLine(),highlightActiveLineGutter(),history(),
       // Notebook gestures come before the default keymap so Shift-Enter runs
       // instead of inserting a newline.
       keymap.of([
@@ -629,7 +660,7 @@ export class MarimoView extends EditableFileView {
       const actions=content.createDiv({cls:'marimo-native-cell-actions'});
       // Only meaningful on markdown rows; CSS hides it everywhere else so the
       // button can appear the moment an edit turns a cell into prose.
-      this.cellAction(actions,'cell-source','code',this.plugin.t('查看/折叠源码','Toggle source'),() => this.toggleMarkdownSource(cell.id));
+      this.cellAction(actions,'cell-source','code',this.plugin.t('编辑/收起 Markdown','Toggle markdown editor'),() => this.toggleMarkdownSource(cell.id));
       this.cellAction(actions,'cell-insert','plus',this.plugin.t('在下方插入单元格','Insert cell below'),() => void this.insertAfter(cell.id));
       this.cellAction(actions,'cell-up','arrow-up',this.plugin.t('上移','Move up'),() => this.shiftCell(cell.id,-1));
       this.cellAction(actions,'cell-down','arrow-down',this.plugin.t('下移','Move down'),() => this.shiftCell(cell.id,1));
@@ -680,6 +711,50 @@ export class MarimoView extends EditableFileView {
     this.refreshMarkdownNow(cellId);
   }
 
+  /**
+   * Language switch, markdown → code: the editor shows the stored `mo.md(...)`
+   * call, exactly what the file keeps. The lock stops the auto-detection from
+   * instantly converting the cell back to markdown.
+   */
+  private convertMarkdownToCode(cellId:string): void {
+    const row=this.rowFor(cellId);
+    const editor=this.editors.get(cellId);
+    if(!row||!editor||!this.markdownMode.has(cellId))return;
+    const doc=editor.view.state.doc.toString();
+    this.markdownLocked.add(cellId);
+    this.markdownMode.delete(cellId);
+    row.removeClass('is-markdown','is-source-open');
+    this.markdownSourceOpen.delete(cellId);
+    this.markdownPreviews.get(cellId)?.empty();
+    this.markdownPreviews.delete(cellId);
+    editor.view.dispatch({changes:{from:0,to:doc.length,insert:encodeMarkdownCell(doc)}});
+    editor.view.requestMeasure();
+    editor.view.focus();
+    this.updateStatus();
+  }
+
+  /**
+   * Language switch, code → markdown: the Python text survives as a fenced
+   * code block inside the markdown, so running the cell still shows the code
+   * instead of misreading it as prose.
+   */
+  private convertCodeToMarkdown(cellId:string): void {
+    const row=this.rowFor(cellId);
+    const editor=this.editors.get(cellId);
+    if(!row||!editor||this.markdownMode.has(cellId))return;
+    const doc=editor.view.state.doc.toString();
+    const markdown=doc.trim()===''?'':'```python\n'+doc+(doc.endsWith('\n')?'':'\n')+'```';
+    this.markdownLocked.delete(cellId);
+    this.markdownMode.add(cellId);
+    row.addClass('is-markdown');
+    row.removeClass('is-source-open');
+    this.markdownSourceOpen.delete(cellId);
+    editor.view.dispatch({changes:{from:0,to:doc.length,insert:markdown}});
+    editor.view.requestMeasure();
+    editor.view.focus();
+    this.updateStatus();
+  }
+
   private scheduleMarkdownRefresh(cellId:string): void {
     const timer=this.markdownTimers.get(cellId);
     if(timer)clearTimeout(timer);
@@ -690,14 +765,25 @@ export class MarimoView extends EditableFileView {
   }
 
   /**
-   * Re-parse the edited code: repaint the preview while it stays static
-   * markdown, or fall back to a plain kernel-driven cell when it does not.
+   * Re-read the edited document. A markdown cell repaints its preview from the
+   * bare markdown; a Python cell whose code becomes a single `mo.md(<literal>)`
+   * switches over — unless the user pinned its language through the menu.
    */
   private refreshMarkdownNow(cellId:string): void {
     const row=this.rowFor(cellId);
     const editor=this.editors.get(cellId);
     if(!row||!editor)return;
-    const parsed=parseMarkdownCell(editor.view.state.doc.toString());
+    const doc=editor.view.state.doc.toString();
+    if(this.markdownMode.has(cellId)) {
+      // The document is the markdown text itself; nothing to parse. The
+      // preview follows every edit, also while the editor is open — that is
+      // the live side-by-side view.
+      const preview=row.querySelector<HTMLElement>('.marimo-native-markdown');
+      if(preview)this.markdownPreviews.set(cellId,preview);
+      void this.renderMarkdownPreview(cellId,doc);
+      return;
+    }
+    const parsed=this.markdownLocked.has(cellId)?null:parseMarkdownCell(doc);
     if(!parsed) {
       row.removeClass('is-markdown','is-source-open');
       this.markdownSourceOpen.delete(cellId);
@@ -708,6 +794,11 @@ export class MarimoView extends EditableFileView {
       return;
     }
     row.addClass('is-markdown');
+    this.markdownMode.add(cellId);
+    // The editor switches to the bare markdown; the write-back path rebuilds
+    // the wrapper. Dispatching re-enters this method through the debounce and
+    // lands in the markdown branch above, so no loop is possible.
+    editor.view.dispatch({changes:{from:0,to:doc.length,insert:parsed.markdown}});
     // A previous non-markdown edit dropped the container registration; the
     // preview element itself is still in the row, so re-attach it.
     const preview=row.querySelector<HTMLElement>('.marimo-native-markdown');
@@ -763,6 +854,12 @@ export class MarimoView extends EditableFileView {
       return entry;
     };
     const separator=()=>menu.createDiv({cls:'marimo-native-cell-menu-separator'}).setAttribute('role','separator');
+    // The language toggle mirrors the marimo editor's markdown/python switch.
+    if(this.markdownMode.has(cellId)) {
+      item('cell-to-code','braces',this.plugin.t('转换为代码单元格','Convert to code cell'),()=>this.convertMarkdownToCode(cellId));
+    } else {
+      item('cell-to-markdown','file-text',this.plugin.t('转换为 Markdown','Convert to markdown'),()=>this.convertCodeToMarkdown(cellId));
+    }
     item('cell-split','split',this.plugin.t('拆分单元格','Split cell'),()=>void this.splitCellAt(cellId));
     item('cell-format','sparkles',this.plugin.t('格式化此单元格','Format cell'),()=>void this.formatCells(cellId));
     item('cell-clear','eraser',this.plugin.t('清除输出','Clear output'),()=>this.clearCellOutput(cellId));
@@ -973,7 +1070,10 @@ export class MarimoView extends EditableFileView {
       const cells=this.readCells();
       const at=cells.findIndex(cell=>cell.id===cellId);
       this.markStructuralChange();
-      this.cells=insertCell(cells,{id,code:after},at+1);
+      // A markdown cell splits its bare text; the new lower half must carry
+      // the `mo.md(...)` wrapper so the file and kernel see valid Python.
+      const lower=this.markdownMode.has(cellId)?encodeMarkdownCell(after):after;
+      this.cells=insertCell(cells,{id,code:lower},at+1);
       const row=this.renderCell(this.cells[at+1],false);
       const anchor=this.rowFor(cellId);
       if(anchor)anchor.after(row);
@@ -1055,6 +1155,9 @@ export class MarimoView extends EditableFileView {
     const codes:Record<string,string>={};
     for(const cell of this.cells) {
       if(only&&cell.id!==only)continue;
+      // A markdown cell is prose; running the Python formatter over its bare
+      // markdown would mangle the text. The wrapper is already canonical.
+      if(this.markdownMode.has(cell.id))continue;
       codes[cell.id]=this.editors.get(cell.id)?.view.state.doc.toString()??cell.code;
     }
     if(!Object.keys(codes).length)return;
@@ -1065,6 +1168,8 @@ export class MarimoView extends EditableFileView {
       if(!shouldApplyResult({backend,operation},{backend:this.backend,operation:this.operation}))return;
       let changed=false;
       for(const [id,code] of Object.entries(result.codes??{})) {
+        // Never let a formatter answer overwrite a markdown document.
+        if(this.markdownMode.has(id))continue;
         const editor=this.editors.get(id);
         if(!editor)continue;
         const current=editor.view.state.doc.toString();
@@ -1088,6 +1193,8 @@ export class MarimoView extends EditableFileView {
   private async completeAt(cellId:string, context:CompletionContext):Promise<CompletionResult|null> {
     const backend=this.backend;
     if(!backend||this.closed||this.busy||this.connecting)return null;
+    // Markdown cells are prose: Python completion over bare text is noise.
+    if(this.markdownMode.has(cellId))return null;
     const word=context.matchBefore(/[\w.]*/);
     if(!word||(word.from===word.to&&!context.explicit))return null;
     try {

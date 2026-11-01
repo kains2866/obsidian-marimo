@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {parseMarkdownCell} from '../src/markdown-cell.ts';
+import {encodeMarkdownCell, parseMarkdownCell} from '../src/markdown-cell.ts';
 
 test('a plain mo.md call with a double-quoted literal is markdown', () => {
   assert.deepEqual(parseMarkdownCell('mo.md("# Hi")'), {markdown: '# Hi'});
@@ -58,4 +58,52 @@ test('anything that is not a single markdown literal is rejected', () => {
 
 test('a multi-parameter call inside the parens is rejected', () => {
   assert.equal(parseMarkdownCell('mo.md("a", justify="left")'), null);
+});
+
+test('an inline literal is taken verbatim, without dedenting', () => {
+  // The encoder writes inline literals; their text must round-trip exactly,
+  // including any indentation a reader might mistake for a block string.
+  assert.deepEqual(parseMarkdownCell('mo.md("""    indented code""")'), {markdown: '    indented code'});
+});
+
+// ---------------------------------------------------------------- encoder
+
+const cases: string[] = [
+  '# Hi',
+  'line one\n\nline two',
+  'ends with a "quote"',
+  'a \\ b',
+  'trailing backslash \\',
+  'triple """ quotes',
+  'both """ and \'\'\' marks',
+  'trailing ""',
+  'trailing "',
+  'starts with\na newline',
+  '\nleading blank line',
+  'text\n',
+  'trailing spaces   ',
+  '    all lines indented\n    like a code block',
+  'unicode: 标题 «guillemets» — dash',
+  'mixed\r\ncrlf',
+];
+
+test('encodeMarkdownCell round-trips through parseMarkdownCell exactly', () => {
+  for (const markdown of cases) {
+    const parsed = parseMarkdownCell(encodeMarkdownCell(markdown));
+    assert.notEqual(parsed, null, `round trip failed for ${JSON.stringify(markdown)}`);
+    assert.equal(parsed!.markdown, markdown, `round trip changed ${JSON.stringify(markdown)}`);
+  }
+});
+
+test('encodeMarkdownCell output is valid single-call python', () => {
+  const code = encodeMarkdownCell('# Hi\n\nbody');
+  assert.match(code, /^mo\.md\(/);
+  assert.match(code, /\)$/);
+  // The kernel-visible wrapper stays one expression on the stored cell.
+  assert.deepEqual(parseMarkdownCell(code), {markdown: '# Hi\n\nbody'});
+});
+
+test('empty markdown encodes to a plain empty literal', () => {
+  assert.equal(encodeMarkdownCell(''), 'mo.md("")');
+  assert.deepEqual(parseMarkdownCell('mo.md("")'), {markdown: ''});
 });

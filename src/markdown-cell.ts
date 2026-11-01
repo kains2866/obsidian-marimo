@@ -14,6 +14,31 @@ export interface MarkdownCellSource {
   markdown: string;
 }
 
+/**
+ * Serialize markdown text back into the `mo.md(...)` call the .py file stores.
+ *
+ * The view edits markdown cells as bare markdown (the way the marimo editor
+ * does); this is the write-back half of that round trip. The literal is laid
+ * out inline — the text starts right after the opening quotes — so parsing it
+ * again takes the verbatim branch and returns exactly the input text.
+ */
+export function encodeMarkdownCell(markdown: string): string {
+  if (markdown === '') return 'mo.md("")';
+  const body = markdown
+    // Doubled backslashes decode to single ones; this also keeps a trailing
+    // backslash from swallowing the closing quote. (Must run first: every
+    // escape inserted below would otherwise be doubled too.)
+    .replace(/\\/g, '\\\\')
+    // A leading newline would mark the literal as block-style and trigger
+    // dedenting; escaping it keeps the literal inline and the text verbatim.
+    .replace(/^\n/, '\\n')
+    // A quote run of three or more would end the literal early.
+    .replace(/"{3,}/g, run => '\\"'.repeat(run.length))
+    // Any quote directly before the closing terminator shifts its position.
+    .replace(/"+$/, run => '\\"'.repeat(run.length));
+  return `mo.md("""${body}""")`;
+}
+
 const ESCAPES: Record<string, string> = {
   n: '\n',
   t: '\t',
@@ -33,6 +58,8 @@ interface Literal {
   end: number;
   /** True for `f` strings, whose braces may interpolate. */
   interpolated: boolean;
+  /** True when the source text starts with a newline: the block-string style. */
+  block: boolean;
 }
 
 /** Parse one Python string literal starting at `start`; `end` points past it. */
@@ -52,12 +79,16 @@ function readLiteral(code: string, start: number): Literal | null {
   const triple = code.slice(index, index + 3) === quote.repeat(3);
   const terminator = triple ? quote.repeat(3) : quote;
   let from = triple ? index + 3 : index + 1;
+  // The block-string style `"""\n…\n"""` is the one humans indent; an inline
+  // literal (`"""# Title…`) is taken verbatim, which is what our own encoder
+  // writes and what keeps its round trip exact.
+  const block = code[from] === '\n';
   let text = '';
   while (from < code.length) {
     if (code.startsWith(terminator, from)) {
       // A single-quoted literal cannot span lines (source newlines were
       // rejected below); a decoded `\n` escape is perfectly legal.
-      return {text, end: from + terminator.length, interpolated};
+      return {text, end: from + terminator.length, interpolated, block};
     }
     const char = code[from]!;
     if (char === '\n' && !triple) return null;
@@ -136,5 +167,7 @@ export function parseMarkdownCell(code: string): MarkdownCellSource | null {
   // Only whitespace or a trailing comment may follow.
   const rest = call.slice(index).trim();
   if (rest && !rest.startsWith('#')) return null;
-  return {markdown: dedent(literal.text)};
+  // A literal laid out inline keeps every character, including any indent —
+  // that is the exactness contract with `encodeMarkdownCell`.
+  return {markdown: literal.block ? dedent(literal.text) : literal.text};
 }

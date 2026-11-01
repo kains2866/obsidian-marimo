@@ -12,6 +12,8 @@
 export interface MarkdownCellSource {
   /** The decoded markdown text, dedented for rendering. */
   markdown: string;
+  /** String prefix on the literal: `''` for a plain string, `'f'` for f-strings. */
+  prefix: '' | 'f';
 }
 
 /**
@@ -20,11 +22,13 @@ export interface MarkdownCellSource {
  * The view edits markdown cells as bare markdown (the way the marimo editor
  * does); this is the write-back half of that round trip. The literal is laid
  * out inline — the text starts right after the opening quotes — so parsing it
- * again takes the verbatim branch and returns exactly the input text.
+ * again takes the verbatim branch and returns exactly the input text. An
+ * f-string prefix round-trips too: braces are doubled so Python interpolates
+ * what the kernel expects and keeps literal braces literal.
  */
-export function encodeMarkdownCell(markdown: string): string {
-  if (markdown === '') return 'mo.md("")';
-  const body = markdown
+export function encodeMarkdownCell(markdown: string, prefix: '' | 'f' = ''): string {
+  if (markdown === '') return prefix ? `mo.md(${prefix}"")` : 'mo.md("")';
+  let body = markdown
     // Doubled backslashes decode to single ones; this also keeps a trailing
     // backslash from swallowing the closing quote. (Must run first: every
     // escape inserted below would otherwise be doubled too.)
@@ -36,7 +40,12 @@ export function encodeMarkdownCell(markdown: string): string {
     .replace(/"{3,}/g, run => '\\"'.repeat(run.length))
     // Any quote directly before the closing terminator shifts its position.
     .replace(/"+$/, run => '\\"'.repeat(run.length));
-  return `mo.md("""${body}""")`;
+  if (prefix === 'f') {
+    // Python f-strings decode `{{` to `{`; doubling keeps the decoded text
+    // identical whether the kernel interpolates the braces or not.
+    body = body.replace(/\{/g, '{{').replace(/\}/g, '}}');
+  }
+  return `mo.md(${prefix}"""${body}""")`;
 }
 
 const ESCAPES: Record<string, string> = {
@@ -58,6 +67,8 @@ interface Literal {
   end: number;
   /** True for `f` strings, whose braces may interpolate. */
   interpolated: boolean;
+  /** Normalized prefix characters in source order (`'f'`, `'r'`, `'rf'`, …). */
+  prefix: string;
   /** True when the source text starts with a newline: the block-string style. */
   block: boolean;
 }
@@ -67,11 +78,12 @@ function readLiteral(code: string, start: number): Literal | null {
   let index = start;
   let raw = false;
   let interpolated = false;
+  let prefix = '';
   // String prefix: combinations of r/f in either order or case.
   while (index < code.length) {
     const char = code[index]!.toLowerCase();
-    if (char === 'r' && !raw) {raw = true; index += 1; continue;}
-    if (char === 'f' && !interpolated) {interpolated = true; index += 1; continue;}
+    if (char === 'r' && !raw) {raw = true; prefix += 'r'; index += 1; continue;}
+    if (char === 'f' && !interpolated) {interpolated = true; prefix += 'f'; index += 1; continue;}
     break;
   }
   const quote = code[index];
@@ -88,7 +100,7 @@ function readLiteral(code: string, start: number): Literal | null {
     if (code.startsWith(terminator, from)) {
       // A single-quoted literal cannot span lines (source newlines were
       // rejected below); a decoded `\n` escape is perfectly legal.
-      return {text, end: from + terminator.length, interpolated, block};
+      return {text, end: from + terminator.length, interpolated, prefix, block};
     }
     const char = code[from]!;
     if (char === '\n' && !triple) return null;
@@ -168,6 +180,45 @@ export function parseMarkdownCell(code: string): MarkdownCellSource | null {
   const rest = call.slice(index).trim();
   if (rest && !rest.startsWith('#')) return null;
   // A literal laid out inline keeps every character, including any indent —
-  // that is the exactness contract with `encodeMarkdownCell`.
-  return {markdown: literal.block ? dedent(literal.text) : literal.text};
+  // that is the exactness contract with `encodeMarkdownCell`. Only the f
+  // prefix participates in the round trip; the encoder never writes raw
+  // strings, so r-prefixed literals keep their pre-existing lossy edit path.
+  return {
+    markdown: literal.block ? dedent(literal.text) : literal.text,
+    prefix: literal.interpolated ? 'f' : '',
+  };
+}
+
+export interface OutlineEntry {
+  /** Heading depth, 1 for `#` through 6 for `######`. */
+  level: number;
+  /** Heading text with inline markers stripped, ready for a nav label. */
+  text: string;
+}
+
+/**
+ * Headings of a markdown document, for the outline rail. Fenced code blocks
+ * are skipped so `#` comments inside them never become navigation entries.
+ */
+export function outlineEntries(markdown: string): OutlineEntry[] {
+  const entries: OutlineEntry[] = [];
+  let fence: string | null = null;
+  for (const line of markdown.split('\n')) {
+    const opening = line.match(/^\s*(`{3,}|~{3,})/);
+    if (opening) {
+      const marker = opening[1]![0]!;
+      fence = fence === null ? marker : fence === marker ? null : fence;
+      continue;
+    }
+    if (fence) continue;
+    const heading = line.match(/^(#{1,6})\s+(.*?)\s*#*\s*$/);
+    if (!heading) continue;
+    const text = heading[2]!
+      // Links keep their label; emphasis markers disappear.
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/[*_`~]/g, '')
+      .trim();
+    if (text) entries.push({level: heading[1]!.length, text});
+  }
+  return entries;
 }

@@ -11,7 +11,8 @@ import {cellPresentation, mergeCellConfig, readCellConfig, wireConfig, type Cell
 import {nativeHighlight} from './editor-theme';
 import {isErrorOutput, isStdinOutput, safeOutput, type BackendMessage, type Cell} from './protocol';
 import {isAllowedImageSource, adaptMarimoTex, isBlockedAttribute, isBlockedElement} from './output-policy';
-import {encodeMarkdownCell, parseMarkdownCell} from './markdown-cell';
+import {encodeMarkdownCell, outlineEntries, parseMarkdownCell} from './markdown-cell';
+import {cellTemplate, type CellKind} from './cell-templates';
 import {canAdoptClaim, cellActions, connectionState, environmentLabel, normalizeCellStatus, shouldApplyResult, shouldApplyStopResult, showPrototypeInfo, statusView, toolbarAvailability, type CellStatus, type ConnectionState, type RunPhase} from './status';
 import {fileFromViewState} from './file-state';
 import {inspectSource} from './inspection';
@@ -94,6 +95,12 @@ export class MarimoView extends EditableFileView {
   private markdownTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Guards `MarkdownRenderer.render` races: only the latest pass may paint. */
   private markdownSeqs = new Map<string, number>();
+
+  /** Markdown cells whose stored literal is an f-string (`mo.md(f"""…""")`). */
+  private markdownFStrings = new Set<string>();
+  /** Right-hand outline rail, mirroring the native editor's heading rail. */
+  private outlineRail!: HTMLElement;
+  private outlineTimer: ReturnType<typeof setTimeout>|null = null;
   constructor(leaf: WorkspaceLeaf, private plugin: MarimoPlugin) {super(leaf);}
   isClosed():boolean {return this.closed;}
   getViewType(): string {return VIEW_TYPE;}
@@ -258,7 +265,7 @@ export class MarimoView extends EditableFileView {
 
     this.connectButton = this.createAction('connect', this.plugin.t('连接并运行','Connect and run'), 'plug-zap', true, () => void this.connect());
     this.connectButton.addClass('mod-cta');
-    this.addButton = this.createAction('add-cell', this.plugin.t('新增单元格','Add cell'), 'plus', false, () => void this.insertAfter(this.selectedId));
+    this.addButton = this.createAction('add-cell', this.plugin.t('新增单元格','Add cell'), 'plus', false, () => this.toggleInsertMenu(this.addButton, this.selectedId));
     this.runButton = this.createAction('run-all', this.plugin.t('运行全部','Run all'), 'play', true, () => void this.perform('run', this.readCells()));
     this.staleButton = this.createAction('run-stale', this.plugin.t('运行陈旧','Run stale'), 'refresh-cw', false, () => void this.runStale());
     this.staleButton.setAttr('aria-label', this.plugin.t('运行输入已变化的单元格','Run cells with stale inputs'));
@@ -285,7 +292,12 @@ export class MarimoView extends EditableFileView {
     this.notice.hidden = true;
     this.previewNote = this.contentEl.createDiv({cls:'marimo-native-preview-note'});
     this.previewNote.hidden = true;
-    this.body = this.contentEl.createDiv({cls:'marimo-native-cells'});
+    // Notebook and outline sit side by side, like the native editor's heading
+    // rail on the right edge of the notebook.
+    const lower=this.contentEl.createDiv({cls:'marimo-native-lower'});
+    this.body = lower.createDiv({cls:'marimo-native-cells'});
+    this.outlineRail = lower.createDiv({cls:'marimo-native-outline'});
+    this.outlineRail.setAttribute('aria-label',this.plugin.t('大纲','Outline'));
 
     this.refreshEnvironment();
     // Obsidian's editor keymap claims Mod-Enter before CodeMirror sees it, so the
@@ -411,7 +423,8 @@ export class MarimoView extends EditableFileView {
    * state into `Cell.code` (save, run, draft, reorder) goes through this.
    */
   private cellCode(cellId:string, doc:string): string {
-    return this.markdownMode.has(cellId)?encodeMarkdownCell(doc):doc;
+    if(!this.markdownMode.has(cellId))return doc;
+    return encodeMarkdownCell(doc,this.markdownFStrings.has(cellId)?'f':'');
   }
 
   private readCells(): Cell[] {
@@ -590,6 +603,7 @@ export class MarimoView extends EditableFileView {
     // or the accent rail would silently vanish after connecting.
     if(this.selectedId && this.cells.some(cell=>cell.id===this.selectedId)) this.selectCell(this.selectedId, true);
     this.updateControls();
+    this.refreshOutline();
   }
 
   private renderCell(cell:Cell, readOnly:boolean): HTMLElement {
@@ -621,7 +635,21 @@ export class MarimoView extends EditableFileView {
     if(markdown) {
       row.addClass('is-markdown');
       this.markdownMode.add(cell.id);
+      if(markdown.prefix==='f')this.markdownFStrings.add(cell.id);
+      else this.markdownFStrings.delete(cell.id);
       if(this.markdownSourceOpen.has(cell.id)) row.addClass('is-source-open');
+    } else if(!readOnly) {
+      // The native editor collapses a code cell with a chevron on its left
+      // edge; our equivalent flips the persisted `hide_code` config. Markdown
+      // rows fold on their own, so they never need it.
+      const collapse=gutter.createEl('button',{cls:'marimo-native-collapse'});
+      collapse.dataset.action='collapse-cell';
+      collapse.setAttr('aria-label',this.plugin.t('折叠/展开代码','Collapse or expand code'));
+      collapse.onclick=()=>{
+        const current=readCellConfig(this.cells.find(item=>item.id===cell.id)?.config);
+        void this.setCellConfig(cell.id,{hideCode:!current.hideCode});
+      };
+      setIcon(collapse,presentation.hideCode?'chevron-down':'chevron-up');
     }
     // Native marimo gives markdown cells their own editor chrome: a compact
     // formatting toolbar, shown only while the cell is being edited.
@@ -672,7 +700,7 @@ export class MarimoView extends EditableFileView {
       // Only meaningful on markdown rows; CSS hides it everywhere else so the
       // button can appear the moment an edit turns a cell into prose.
       this.cellAction(actions,'cell-source','code',this.plugin.t('编辑/收起 Markdown','Toggle markdown editor'),() => this.toggleMarkdownSource(cell.id));
-      this.cellAction(actions,'cell-insert','plus',this.plugin.t('在下方插入单元格','Insert cell below'),() => void this.insertAfter(cell.id));
+      this.cellAction(actions,'cell-insert','plus',this.plugin.t('在下方插入单元格','Insert cell below'),(event) => this.toggleInsertMenu(event.currentTarget as HTMLElement,cell.id));
       this.cellAction(actions,'cell-up','arrow-up',this.plugin.t('上移','Move up'),() => this.shiftCell(cell.id,-1));
       this.cellAction(actions,'cell-down','arrow-down',this.plugin.t('下移','Move down'),() => this.shiftCell(cell.id,1));
       this.cellAction(actions,'cell-config','more-horizontal',this.plugin.t('单元格设置','Cell settings'),(event) => this.toggleCellMenu(event.currentTarget as HTMLElement,cell.id));
@@ -706,6 +734,8 @@ export class MarimoView extends EditableFileView {
     const run=row.querySelector<HTMLButtonElement>('button[data-action="run-cell"]');
     // `updateControls` owns the rest of the availability rules.
     if(run)run.disabled=presentation.disabled;
+    const collapse=row.querySelector<HTMLElement>('button[data-action="collapse-cell"]');
+    if(collapse)setIcon(collapse,presentation.hideCode?'chevron-down':'chevron-up');
     // CodeMirror measures on its own, but a hidden host has a zero size.
     if(!presentation.hideCode)this.editors.get(cellId)?.view.requestMeasure();
   }
@@ -819,7 +849,7 @@ export class MarimoView extends EditableFileView {
     this.markdownSourceOpen.delete(cellId);
     this.markdownPreviews.get(cellId)?.empty();
     this.markdownPreviews.delete(cellId);
-    editor.view.dispatch({changes:{from:0,to:doc.length,insert:encodeMarkdownCell(doc)}});
+    editor.view.dispatch({changes:{from:0,to:doc.length,insert:encodeMarkdownCell(doc,this.markdownFStrings.has(cellId)?'f':'')}});
     editor.view.requestMeasure();
     editor.view.focus();
     this.updateStatus();
@@ -873,20 +903,27 @@ export class MarimoView extends EditableFileView {
       const preview=row.querySelector<HTMLElement>('.marimo-native-markdown');
       if(preview)this.markdownPreviews.set(cellId,preview);
       void this.renderMarkdownPreview(cellId,doc);
+      this.scheduleOutlineRefresh();
       return;
     }
     const parsed=this.markdownLocked.has(cellId)?null:parseMarkdownCell(doc);
     if(!parsed) {
       row.removeClass('is-markdown','is-source-open');
       this.markdownSourceOpen.delete(cellId);
+      this.markdownFStrings.delete(cellId);
       // The stale preview must not linger next to the real kernel output.
       this.markdownPreviews.get(cellId)?.empty();
       this.markdownPreviews.delete(cellId);
       editor.view.requestMeasure();
+      this.scheduleOutlineRefresh();
       return;
     }
     row.addClass('is-markdown');
     this.markdownMode.add(cellId);
+    if(parsed.prefix==='f')this.markdownFStrings.add(cellId);
+    else this.markdownFStrings.delete(cellId);
+    // The outline gains or loses entries when a cell changes language.
+    this.scheduleOutlineRefresh();
     // The editor switches to the bare markdown; the write-back path rebuilds
     // the wrapper. Dispatching re-enters this method through the debounce and
     // lands in the markdown branch above, so no loop is possible.
@@ -949,6 +986,17 @@ export class MarimoView extends EditableFileView {
     // The language toggle mirrors the marimo editor's markdown/python switch.
     if(this.markdownMode.has(cellId)) {
       item('cell-to-code','braces',this.plugin.t('转换为代码单元格','Convert to code cell'),()=>this.convertMarkdownToCode(cellId));
+      // The native editor toggles the literal between a plain string and an
+      // f-string; the flag travels with the cell through the encode funnel.
+      const fstring=this.markdownFStrings.has(cellId);
+      item('toggle-f-string','braces',fstring?this.plugin.t('转为普通字符串','Use plain string'):this.plugin.t('转为 f-string','Use f-string'),()=>{
+        if(fstring)this.markdownFStrings.delete(cellId);
+        else this.markdownFStrings.add(cellId);
+        // The stored code changes even though the visible text does not.
+        this.markCellStale(cellId);
+        this.dirty=true;
+        this.updateStatus();
+      });
     } else {
       item('cell-to-markdown','file-text',this.plugin.t('转换为 Markdown','Convert to markdown'),()=>this.convertCodeToMarkdown(cellId));
     }
@@ -1017,7 +1065,7 @@ export class MarimoView extends EditableFileView {
   }
 
   /** Insert an empty cell after `afterId`; with no selection it goes last. */
-  private async insertAfter(afterId:string|null):Promise<void> {
+  private async insertAfter(afterId:string|null, kind:CellKind='python'):Promise<void> {
     const backend=this.backend;
     if(!backend||!this.canEditStructure())return;
     const operation=++this.operation;
@@ -1040,12 +1088,85 @@ export class MarimoView extends EditableFileView {
       this.selectedId=id;
       this.selectCell(id,true);
       this.updateControls();
+      // A typed cell receives its starter code through the editor so the
+      // regular edit pipeline (staleness, outline) applies. Markdown starts
+      // in markdown mode directly: bare template text never matches the
+      // `mo.md(...)` auto-detection, which only reads stored python code.
+      if(kind==='markdown') {
+        this.markdownMode.add(id);
+        this.markdownFStrings.delete(id);
+        row.addClass('is-markdown');
+      }
+      if(kind!=='python') {
+        const view=this.editors.get(id)?.view;
+        if(view)view.dispatch({changes:{from:0,to:view.state.doc.length,insert:cellTemplate(kind)}});
+      }
       this.editors.get(id)?.view.focus();
+      this.refreshOutline();
     } catch(error) {
       this.structureFailed(backend,operation,error);
     } finally {
       if(operation===this.operation){this.busy=false;if(!this.closed)this.updateControls();}
     }
+  }
+
+  /**
+   * The native editor's creation bar: a new cell can start as Python,
+   * Markdown, or SQL. Anchored to whichever "+" opened it.
+   */
+  private toggleInsertMenu(button:HTMLElement, afterId:string|null): void {
+    if(this.cellMenu?.dataset.insertFor){this.closeCellMenu();return;}
+    this.closeCellMenu();
+    const menu=button.parentElement!.createDiv({cls:'marimo-native-cell-menu'});
+    menu.dataset.insertFor='1';
+    menu.setAttribute('role','menu');
+    menu.setAttribute('aria-label',this.plugin.t('插入单元格','Insert cell'));
+    const item=(icon:string,label:string,kind:CellKind) => {
+      const entry=menu.createEl('button',{cls:'marimo-native-cell-menu-item'});
+      entry.dataset.menuAction='insert-'+kind;
+      entry.setAttribute('role','menuitem');
+      setIcon(entry,icon);
+      entry.createSpan({text:label});
+      entry.onclick=event=>{event.stopPropagation();this.closeCellMenu();void this.insertAfter(afterId,kind);};
+    };
+    item('file-code',this.plugin.t('Python 单元格','Python cell'),'python');
+    item('file-text',this.plugin.t('Markdown 单元格','Markdown cell'),'markdown');
+    item('database',this.plugin.t('SQL 单元格','SQL cell'),'sql');
+    this.cellMenu=menu;
+    this.menuDismiss=(event:Event)=>{if(!menu.contains(event.target as Node))this.closeCellMenu();};
+    document.addEventListener('pointerdown',this.menuDismiss,{capture:true});
+    document.addEventListener('keydown',this.menuKey,{capture:true});
+  }
+
+  /** Rebuild the outline rail from the current markdown cells. */
+  private refreshOutline(): void {
+    if(!this.outlineRail||this.closed)return;
+    this.outlineRail.empty();
+    this.outlineRail.createDiv({cls:'marimo-native-outline-title',text:this.plugin.t('大纲','Outline')});
+    let count=0;
+    for(const cell of this.cells) {
+      const editor=this.editors.get(cell.id);
+      const doc=editor?editor.view.state.doc.toString():cell.code;
+      const markdown=this.markdownMode.has(cell.id)?doc:parseMarkdownCell(doc)?.markdown??null;
+      if(!markdown)continue;
+      for(const entry of outlineEntries(markdown)) {
+        count+=1;
+        const button=this.outlineRail.createEl('button',{cls:'marimo-native-outline-item',text:entry.text});
+        button.dataset.level=String(entry.level);
+        button.onclick=()=>{
+          this.rowFor(cell.id)?.scrollIntoView({block:'start',behavior:'smooth'});
+          this.selectCell(cell.id);
+        };
+      }
+    }
+    this.outlineRail.toggleClass('is-empty',count===0);
+    if(!count)this.outlineRail.createDiv({cls:'marimo-native-outline-empty',text:this.plugin.t('暂无标题','No headings')});
+  }
+
+  /** Outline follows markdown edits, debounced like the preview repaint. */
+  private scheduleOutlineRefresh(): void {
+    if(this.outlineTimer)clearTimeout(this.outlineTimer);
+    this.outlineTimer=setTimeout(()=>{this.outlineTimer=null;this.refreshOutline();},300);
   }
 
   private async deleteCell(cellId:string):Promise<void> {
@@ -1067,6 +1188,7 @@ export class MarimoView extends EditableFileView {
       this.selectedId=neighbour?.id??null;
       if(this.selectedId)this.selectCell(this.selectedId,true);
       this.updateControls();
+      this.refreshOutline();
     } catch(error) {
       this.structureFailed(backend,operation,error);
     } finally {
@@ -1519,6 +1641,7 @@ export class MarimoView extends EditableFileView {
     if(this.closing)return this.closing;
     if(this.keyScope){this.app.keymap.popScope(this.keyScope);this.keyScope=null;}
     this.closed=true;this.loadGeneration++;this.inspection?.abort();
+    if(this.outlineTimer){clearTimeout(this.outlineTimer);this.outlineTimer=null;}
     this.closing=this.releaseFileSession();return this.closing;
   }
 }

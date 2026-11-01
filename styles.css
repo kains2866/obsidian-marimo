@@ -109,7 +109,54 @@
 
 /* ------------------------------------------------------------------ cells */
 
-.marimo-native-cells { position: relative; padding-top: 6px; }
+/* Notebook column plus the outline rail, like the native editor's heading
+   rail on the right edge. */
+.marimo-native-lower { display: flex; gap: 12px; align-items: flex-start; }
+.marimo-native-cells { position: relative; padding-top: 6px; flex: 1; min-width: 0; }
+
+.marimo-native-outline {
+  width: 148px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 6px 2px 6px 8px;
+  border-left: 1px solid var(--background-modifier-border);
+  font-size: var(--font-ui-smaller);
+}
+.marimo-native-outline-title {
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  font-size: var(--font-ui-smallest);
+  margin-bottom: 4px;
+}
+.marimo-native-outline-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: var(--text-normal);
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: var(--radius-s);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.marimo-native-outline-item:hover { background: var(--background-modifier-hover); }
+.marimo-native-outline-item[data-level="1"] { font-weight: 600; }
+.marimo-native-outline-item[data-level="2"] { padding-left: 14px; }
+.marimo-native-outline-item[data-level="3"] { padding-left: 22px; color: var(--text-muted); }
+.marimo-native-outline-item[data-level="4"],
+.marimo-native-outline-item[data-level="5"],
+.marimo-native-outline-item[data-level="6"] { padding-left: 30px; color: var(--text-faint); }
+.marimo-native-outline-empty { color: var(--text-faint); padding: 3px 6px; }
+@media (max-width: 760px) { .marimo-native-outline { display: none; } }
 
 .marimo-native-cell {
   position: relative;
@@ -159,11 +206,37 @@
 .marimo-native-run:disabled { opacity: .4; cursor: default; }
 .marimo-native-run svg { width: 15px; height: 15px; }
 
+/* Collapse chevron under the run button, like the native cell's left edge. */
+.marimo-native-collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+.marimo-native-cell:hover .marimo-native-collapse,
+.marimo-native-cell:focus-within .marimo-native-collapse { opacity: 1; }
+.marimo-native-collapse:hover { background: var(--background-secondary); color: var(--text-normal); }
+.marimo-native-collapse svg { width: 14px; height: 14px; }
+
 /* Per-cell execution status from cell-op events. */
 .marimo-native-cell[data-cell-status="running"] .marimo-native-run svg { animation: marimo-native-spin .9s linear infinite; }
 .marimo-native-cell[data-cell-status="queued"] .marimo-native-run,
 .marimo-native-cell[data-cell-status="disabled"] .marimo-native-run { opacity: .4; }
-.marimo-native-cell[data-cell-status="stale"] .marimo-native-run { color: var(--text-muted); }
+/* Stale code glows amber like the native run button, asking for a re-run.
+   `data-stale` is the editor-side mark, `data-cell-status` the kernel's. */
+.marimo-native-cell[data-cell-status="stale"] .marimo-native-run,
+.marimo-native-cell[data-stale="true"] .marimo-native-run { color: var(--color-orange, #e8890c); }
 @keyframes marimo-native-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
   .marimo-native-cell[data-cell-status="running"] .marimo-native-run svg { animation: none; }
@@ -175,9 +248,9 @@
 .marimo-native-cell.is-disabled .marimo-native-cell-content { opacity: .62; }
 .marimo-native-cell.is-disabled .marimo-native-run { cursor: default; }
 
-/* Hidden code keeps the output at full width; the menu brings the editor back. */
-.marimo-native-cell.is-code-hidden { grid-template-columns: minmax(0, 1fr); }
-.marimo-native-cell.is-code-hidden .marimo-native-gutter { display: none; }
+/* Hidden code keeps the output at full width; the gutter keeps only the
+   expand chevron so one click brings the editor back. */
+.marimo-native-cell.is-code-hidden .marimo-native-run { display: none; }
 .marimo-native-cell.is-code-hidden .marimo-native-editor { display: none; }
 
 /* Clamped output scrolls inside its box instead of pushing the page down. */

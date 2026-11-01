@@ -1,44 +1,44 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {encodeMarkdownCell, parseMarkdownCell} from '../src/markdown-cell.ts';
+import {encodeMarkdownCell, outlineEntries, parseMarkdownCell} from '../src/markdown-cell.ts';
 
 test('a plain mo.md call with a double-quoted literal is markdown', () => {
-  assert.deepEqual(parseMarkdownCell('mo.md("# Hi")'), {markdown: '# Hi'});
+  assert.deepEqual(parseMarkdownCell('mo.md("# Hi")'), {markdown: '# Hi', prefix: ''});
 });
 
 test('single quotes and surrounding whitespace are accepted', () => {
-  assert.deepEqual(parseMarkdownCell("  mo.md( '## list' )  \n"), {markdown: '## list'});
+  assert.deepEqual(parseMarkdownCell("  mo.md( '## list' )  \n"), {markdown: '## list', prefix: ''});
 });
 
 test('a triple-quoted body keeps its newlines and is dedented', () => {
   const code = 'mo.md(\n    """\n    ## Rich body\n\n    - one\n    - two\n    """\n)';
-  assert.deepEqual(parseMarkdownCell(code), {markdown: '## Rich body\n\n- one\n- two'});
+  assert.deepEqual(parseMarkdownCell(code), {markdown: '## Rich body\n\n- one\n- two', prefix: ''});
 });
 
 test('escape sequences are decoded like Python would', () => {
-  assert.deepEqual(parseMarkdownCell('mo.md("a\\nb\\tc\\\\d\\"e")'), {markdown: 'a\nb\tc\\d"e'});
+  assert.deepEqual(parseMarkdownCell('mo.md("a\\nb\\tc\\\\d\\"e")'), {markdown: 'a\nb\tc\\d"e', prefix: ''});
   // A line continuation folds into one line.
-  assert.deepEqual(parseMarkdownCell('mo.md("one\\\ntwo")'), {markdown: 'onetwo'});
+  assert.deepEqual(parseMarkdownCell('mo.md("one\\\ntwo")'), {markdown: 'onetwo', prefix: ''});
 });
 
 test('an unknown escape is kept verbatim', () => {
-  assert.deepEqual(parseMarkdownCell('mo.md("\\q")'), {markdown: '\\q'});
+  assert.deepEqual(parseMarkdownCell('mo.md("\\q")'), {markdown: '\\q', prefix: ''});
 });
 
 test('a raw string keeps backslashes and rejects a trailing one', () => {
-  assert.deepEqual(parseMarkdownCell('mo.md(r"C:\\path\\section")'), {markdown: 'C:\\path\\section'});
+  assert.deepEqual(parseMarkdownCell('mo.md(r"C:\\path\\section")'), {markdown: 'C:\\path\\section', prefix: ''});
   assert.equal(parseMarkdownCell('mo.md(r"ends\\")'), null);
 });
 
 test('an f-string without interpolation is markdown; with interpolation it is not', () => {
-  assert.deepEqual(parseMarkdownCell('mo.md(f"plain")'), {markdown: 'plain'});
+  assert.deepEqual(parseMarkdownCell('mo.md(f"plain")'), {markdown: 'plain', prefix: 'f'});
   // A doubled brace is a literal brace, not an interpolation slot.
-  assert.deepEqual(parseMarkdownCell('mo.md(f"brace{{literal}}")'), {markdown: 'brace{literal}'});
+  assert.deepEqual(parseMarkdownCell('mo.md(f"brace{{literal}}")'), {markdown: 'brace{literal}', prefix: 'f'});
   assert.equal(parseMarkdownCell('mo.md(f"doubled={x}")'), null);
 });
 
 test('a leading comment line is allowed', () => {
-  assert.deepEqual(parseMarkdownCell('# the intro\nmo.md("# Hi")'), {markdown: '# Hi'});
+  assert.deepEqual(parseMarkdownCell('# the intro\nmo.md("# Hi")'), {markdown: '# Hi', prefix: ''});
 });
 
 test('anything that is not a single markdown literal is rejected', () => {
@@ -63,7 +63,7 @@ test('a multi-parameter call inside the parens is rejected', () => {
 test('an inline literal is taken verbatim, without dedenting', () => {
   // The encoder writes inline literals; their text must round-trip exactly,
   // including any indentation a reader might mistake for a block string.
-  assert.deepEqual(parseMarkdownCell('mo.md("""    indented code""")'), {markdown: '    indented code'});
+  assert.deepEqual(parseMarkdownCell('mo.md("""    indented code""")'), {markdown: '    indented code', prefix: ''});
 });
 
 // ---------------------------------------------------------------- encoder
@@ -100,10 +100,52 @@ test('encodeMarkdownCell output is valid single-call python', () => {
   assert.match(code, /^mo\.md\(/);
   assert.match(code, /\)$/);
   // The kernel-visible wrapper stays one expression on the stored cell.
-  assert.deepEqual(parseMarkdownCell(code), {markdown: '# Hi\n\nbody'});
+  assert.deepEqual(parseMarkdownCell(code), {markdown: '# Hi\n\nbody', prefix: ''});
 });
 
 test('empty markdown encodes to a plain empty literal', () => {
   assert.equal(encodeMarkdownCell(''), 'mo.md("")');
-  assert.deepEqual(parseMarkdownCell('mo.md("")'), {markdown: ''});
+  assert.deepEqual(parseMarkdownCell('mo.md("")'), {markdown: '', prefix: ''});
+});
+
+// ----------------------------------------------------------------- f-string
+
+test('f-string encoding doubles braces and round-trips the prefix', () => {
+  const code = encodeMarkdownCell('value {x} stays', 'f');
+  assert.match(code, /^mo\.md\(f"""/);
+  assert.match(code, /\{\{x\}\}/);
+  const parsed = parseMarkdownCell(code);
+  assert.deepEqual(parsed, {markdown: 'value {x} stays', prefix: 'f'});
+});
+
+test('plain encoding keeps braces literal and reports no prefix', () => {
+  const parsed = parseMarkdownCell(encodeMarkdownCell('a {b} c'));
+  assert.deepEqual(parsed, {markdown: 'a {b} c', prefix: ''});
+});
+
+test('an existing f-string literal reports the f prefix', () => {
+  assert.deepEqual(parseMarkdownCell('mo.md(f"""# Hi""")'), {markdown: '# Hi', prefix: 'f'});
+  assert.deepEqual(parseMarkdownCell('mo.md(F"plain")'), {markdown: 'plain', prefix: 'f'});
+});
+
+// ------------------------------------------------------------------ outline
+
+test('outlineEntries lists headings with depth and clean labels', () => {
+  const entries = outlineEntries('# One\n\ntext\n## Two *emphasised*\n### [Link](https://x) head\n#### Four `code`');
+  assert.deepEqual(entries, [
+    {level: 1, text: 'One'},
+    {level: 2, text: 'Two emphasised'},
+    {level: 3, text: 'Link head'},
+    {level: 4, text: 'Four code'},
+  ]);
+});
+
+test('outlineEntries skips headings inside fenced code', () => {
+  const entries = outlineEntries('# Real\n\n```python\n# not a heading\n```\n\n~~~\n# also not\n~~~\n\n## After');
+  assert.deepEqual(entries, [{level: 1, text: 'Real'}, {level: 2, text: 'After'}]);
+});
+
+test('outlineEntries ignores close fences of the wrong marker', () => {
+  const entries = outlineEntries('# A\n\n```\nstill code ~~~\n```\n\n## B');
+  assert.deepEqual(entries, [{level: 1, text: 'A'}, {level: 2, text: 'B'}]);
 });

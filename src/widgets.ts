@@ -134,7 +134,6 @@ function buildWidget(element: UiElement, innerHtml: string, deps: WidgetDeps): H
           input.value = String(initial[index] ?? start);
           input.disabled = disabled;
           input.setAttribute('aria-label', index === 0 ? 'min' : 'max');
-          bounds.push(input);
           pair.append(input);
           return input;
         });

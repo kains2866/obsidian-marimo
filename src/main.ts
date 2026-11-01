@@ -1,10 +1,11 @@
-import {FileSystemAdapter, FuzzySuggestModal, getLanguage, Notice, Plugin, PluginSettingTab, TFile, type SettingDefinitionItem} from 'obsidian';
+import {FileSystemAdapter, FuzzySuggestModal, getLanguage, Notice, Plugin, PluginSettingTab, TFile, TFolder, type SettingDefinitionItem} from 'obsidian';
 import {existsSync, realpathSync} from 'node:fs';
 import {homedir} from 'node:os';
 import {join, resolve, sep} from 'node:path';
 import {createHash} from 'node:crypto';
 import {RecoveryStore, normalizePython} from './recovery';
 import {MarimoView, VIEW_TYPE} from './view';
+import {NOTEBOOK_TEMPLATE, nextNotebookPath} from './notebook-file';
 import type {Cell} from './protocol';
 import {WriterLocks,type WriterLease} from './writer-lock';
 
@@ -38,7 +39,12 @@ export default class MarimoPlugin extends Plugin {
     }});
     this.registerEvent(this.app.workspace.on('file-menu',(menu,file)=>{
       if(file instanceof TFile && file.extension==='py') menu.addItem(item=>item.setTitle(this.t('以原生 marimo 视图打开','Open in native marimo view')).setIcon('notebook-pen').onClick(()=>open(file)));
+      // Folders get the create entry, so a new notebook can be started where
+      // the user is already looking instead of at the vault root.
+      else if(file instanceof TFolder) menu.addItem(item=>item.setTitle(this.t('新建 marimo notebook','New marimo notebook')).setIcon('file-plus-2').onClick(()=>void this.createNotebook(file.path)));
     }));
+    this.addCommand({id:'new-marimo-notebook',name:this.t('新建 marimo notebook','New marimo notebook'),callback:()=>void this.createNotebook()});
+    this.addRibbonIcon('notebook-pen',this.t('新建 marimo notebook','New marimo notebook'),()=>void this.createNotebook());
     const plugin=this;
     this.addSettingTab(new class extends PluginSettingTab {
       getSettingDefinitions(): SettingDefinitionItem[] {return [
@@ -57,6 +63,28 @@ export default class MarimoPlugin extends Plugin {
     if(anotherWriter)throw new Error(this.t('请先关闭此文件的其他编辑视图。','Close other editors of this file first.'));
     const leaf=this.app.workspace.getLeaf('tab');
     await leaf.setViewState({type:VIEW_TYPE,state:{file:file.path},active:true});
+  }
+  /**
+   * Create a marimo notebook in `folder`, open it in the native view and start
+   * its kernel. The kernel is the point: a brand-new file has nothing to show
+   * until it runs, so the user should not have to press connect as well.
+   */
+  async createNotebook(folder?:string): Promise<void> {
+    try {
+      const target=folder??this.defaultFolder();
+      const path=nextNotebookPath(target,candidate=>this.app.vault.getAbstractFileByPath(candidate)!==null);
+      const file=await this.app.vault.create(path,NOTEBOOK_TEMPLATE);
+      await this.openFile(file);
+      const leaf=this.app.workspace.getLeavesOfType(VIEW_TYPE).find(candidate=>candidate.view instanceof MarimoView&&candidate.view.getState().filename===file.path);
+      const view=leaf?.view;
+      if(view instanceof MarimoView) await view.autoConnect();
+      else new Notice(this.t('已创建 '+path+'，请手动连接。','Created '+path+'; connect it manually.'));
+    } catch(error) {new Notice(String(error));}
+  }
+  /** New notebooks start where the open file lives, not always at the root. */
+  private defaultFolder(): string {
+    const parent=this.app.workspace.getActiveFile()?.parent;
+    return parent && parent.path!=='/' ? parent.path : '';
   }
   private absoluteRoot():string {
     const adapter=this.app.vault.adapter;if(!(adapter instanceof FileSystemAdapter))throw new Error('A desktop filesystem vault is required');return resolve(adapter.getBasePath());

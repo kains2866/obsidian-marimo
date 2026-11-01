@@ -32,6 +32,7 @@ status: current
 ## 相关位置
 
 - 源码与构建：仓库根 `src/`、`python/`、`tests/`、`dist/`（产物，不入库）
+- 示例 notebook：[examples/marimo-showcase.py](examples/marimo-showcase.py)，覆盖面见[验证记录](superpowers/specs/2026-11-01-native-marimo-verification.md)
 - 宿主验证素材：工作区 `../assets/`（截图、JSON 证据、验证脚本；生成物不入库）
 - 项目规则：仓库根 `AGENTS.md`
 

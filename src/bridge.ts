@@ -48,8 +48,20 @@ export class Backend {
       child.stderr.resume();
       createInterface({input: child.stdout}).on('line', line => {
         if (this.closed) return;
+        let frame: BackendMessage;
         try {
-          const frame = decodeMessage(line);
+          frame = decodeMessage(line);
+        } catch (error) {
+          // A frame this plugin cannot read means the two sides no longer agree
+          // on the protocol; carrying on would corrupt the notebook silently.
+          fail(new Error('Invalid marimo adapter response'));
+          this.onMessage({type:'error',error:'Invalid marimo adapter response; reconnect'});
+          void this.close();
+          return;
+        }
+        // Dispatch is kept apart from decoding: a rendering bug in the view is a
+        // bug in the view, not a broken adapter, and must not end the session.
+        try {
           if (frame.type === 'ready') {clearTimeout(timer); resolve();}
           if (frame.type === 'error') fail(new Error(frame.error));
           if (frame.type === 'result') {
@@ -57,7 +69,9 @@ export class Backend {
             if (pending) {clearTimeout(pending.timer); this.pending.delete(frame.id); frame.error ? pending.reject(new Error(frame.error)) : pending.resolve({cellId: frame.cellId, codes: frame.codes, options: frame.options, prefixLength: frame.prefixLength});}
           }
           this.onMessage(frame);
-        } catch (error) {fail(new Error('Invalid marimo adapter response'));this.onMessage({type:'error',error:'Invalid marimo adapter response; reconnect'});void this.close();}
+        } catch (error) {
+          console.error('marimo notebook: frame handling failed', error);
+        }
       });
     });
   }

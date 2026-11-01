@@ -343,6 +343,21 @@ export class MarimoView extends EditableFileView {
     }
   }
 
+  /**
+   * Connect as soon as the static preview is ready.
+   *
+   * Used right after "new marimo notebook": the file exists but shows nothing
+   * until a kernel runs it, so waiting for a second click would leave the user
+   * looking at an empty notebook. A preview that never becomes ready inside the
+   * deadline stays disconnected rather than spinning forever.
+   */
+  async autoConnect(): Promise<void> {
+    const deadline=Date.now()+15_000;
+    while(!this.closed&&!this.notebookReady&&Date.now()<deadline) await new Promise(resolve=>setTimeout(resolve,50));
+    if(this.closed||!this.notebookReady)return;
+    await this.connect();
+  }
+
   /** Real disconnect: wait for our own adapter/process group to exit. */
   private async stop(): Promise<void> {
     if(this.stopping||this.closed) return;

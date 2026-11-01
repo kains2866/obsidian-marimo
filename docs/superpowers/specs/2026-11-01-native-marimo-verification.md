@@ -185,3 +185,19 @@ WorkBuddy 对安装源码进行了独立只读调查，提供了路由、通知�
 - 菜单验证（`assets/verify-cell-menu.py`）：10 个菜单项齐全、分隔线≥2、kbd 提示 ⌘⇧1/⌘⇧2、清输出后 display/console 为空、光标拆分 `a = 1`/`b = 2`、菜单移到最前/最后后 DOM 与模型一致。截图 `ui8-menu-light.png`、`ui8-menu-dark.png`；证据 `cell-menu-verification.json`。
 - 未做（记录差异）：Convert to Markdown/SQL（自动渲染已覆盖 md 编辑体验；SQL 依赖 duckdb 内核，另行评估）、Name 重命名（需代码生成器支持，另行评估）、Copy link to cell（Web 专属，不适用）。
 - 测试：`tests/cells.test.ts` 增 splitCellCode 8 断言。Node 102 项、Python 61 项通过；typecheck/build 通过。
+
+## 能力演示 notebook 与新建入口
+
+**marimo-showcase.py（`docs/examples/`，副本在 Temp vault）**：一个文件覆盖反应式数据流、16 种 `mo.ui` 控件、`mo.state`、`mo.ui.form`、`mo.ui.tabs`、`mo.ui.table`、`mo.sql`（duckdb + polars）、控制台输出、结构化返回、`mo.stop` 守卫、`mo.callout`，以及由 Obsidian 引擎渲染的静态 markdown（KaTeX 行内与块级公式、表格、任务列表、引用、内链）。已用 `marimo export html` 确认在 0.25.2 下无单元格失败；`marimo export` 环境没有 pandas/numpy/matplotlib，示例刻意只用标准库 + polars/duckdb。
+
+- 宿主实证（`assets/verify-showcase.py`）：39 个单元格全部连接运行成功；16 种控件全部挂载为原生控件（`.marimo-native-widget` 按 kind 计数）；无 `marimo-native-unsupported`、无错误输出；SQL 结果表（region/销售额 3 行）与 `mo.ui.table`（4 行）正常；滑块 3→5 触发下游 md 重算、按钮点击 `mo.state` 0→1 次、tabs 切到「细节」面板；静态 md 折叠 9/9，KaTeX、任务列表、内链（`[[marimo-native-demo]]`）渲染。截图 `ui9-showcase-{preview,widgets,form,table,prose}-light.png` 与 dark 两张；证据 `showcase-verification.json`。
+
+**新建 marimo notebook 入口**：侧边栏 ribbon 图标、命令面板命令、文件浏览器文件夹右键菜单三处入口；创建 `Untitled marimo[ n].py`（命名规则 `nextNotebookPath`，绝不覆盖已有文件），写入最小模板，打开原生视图并**自动连接**（`MarimoView.autoConnect()` 等预览就绪后直接 connect，超时 15s 放弃而非死等）。
+
+- 期间修出一个真实缺陷：range-slider 分支在数组字面量初始化器里引用自身（TDZ），首个 range-slider 一渲染就把整个会话弄断，且 bridge 的 catch 会把视图层异常误报成「Invalid marimo adapter response」。修复：去掉多余 `bounds.push`；bridge 把「协议解码失败」（关会话）与「帧分发异常」（console.error，会话继续）分开。
+- 宿主实证（`assets/verify-new-notebook.py`）：命令、ribbon、folder 右键菜单均注册；点菜单创建文件、模板内容正确、视图打开、内核自动启动并 `Run finished`；停止→回收→无草稿残留。证据 `new-notebook-verification.json`。
+- 测试：`tests/notebook-file.test.ts`（模板结构与命名规则 5 项）。Node 109 项、Python 61 项通过；typecheck/build 通过。
+
+**残留清理**：`__marimo__/session` 下 23 个会话缓存（fixture 已删，marimo 连接时会重建）、`/tmp` 草稿备份与探针目录；Temp 回收站内容属于其他项目，未动。
+
+仍未验证：showcase 在 Windows/Linux、真实鼠标拖动滑块（用其 change 事件代替）。

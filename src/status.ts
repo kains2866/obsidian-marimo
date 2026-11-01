@@ -6,7 +6,7 @@
  */
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected';
-export type RunPhase = 'none' | 'running' | 'finished' | 'failed';
+export type RunPhase = 'none' | 'running' | 'finished' | 'failed' | 'interrupted';
 export type StatusTone = 'muted' | 'accent' | 'error';
 
 /**
@@ -43,6 +43,7 @@ const PHASE: Record<RunPhase, [string, string]> = {
   running: ['运行中…', 'Running…'],
   finished: ['运行结束', 'Run finished'],
   failed: ['运行失败', 'Run failed'],
+  interrupted: ['已中断', 'Interrupted'],
 };
 
 export function statusView(status: ViewStatus, t: Translate): StatusView {
@@ -76,6 +77,8 @@ export interface ToolbarAvailability {
   save: boolean;
   stop: boolean;
   restore: boolean;
+  /** Cancels the current run without dropping the session. */
+  interrupt: boolean;
 }
 
 export function toolbarAvailability(input: ToolbarInput): ToolbarAvailability {
@@ -91,6 +94,8 @@ export function toolbarAvailability(input: ToolbarInput): ToolbarAvailability {
     // Stop stays reachable while connecting so a hung start can be abandoned.
     stop: !stopping && (live || input.connection === 'connecting'),
     restore: live && !busy && input.ready && input.hasDraft,
+    // Interrupt is the only action that must stay live during `running`.
+    interrupt: live && !stopping && input.run === 'running',
   };
 }
 

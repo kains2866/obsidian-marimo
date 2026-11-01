@@ -65,11 +65,11 @@ test('a backend object that has not reported ready is still connecting', () => {
 test('an in-flight save keeps run and save disabled but leaves stop reachable', () => {
   assert.deepEqual(
     toolbarAvailability({connection: 'connected', run: 'finished', ready: true, hasDraft: false, busy: true}),
-    {connect: false, runAll: false, save: false, stop: true, restore: false},
+    {connect: false, runAll: false, save: false, stop: true, restore: false, interrupt: false},
   );
   // Without the busy flag the same idle session is runnable again.
   assert.deepEqual(
     toolbarAvailability({connection: 'connected', run: 'finished', ready: true, hasDraft: false}),
-    {connect: false, runAll: true, save: true, stop: true, restore: false},
+    {connect: false, runAll: true, save: true, stop: true, restore: false, interrupt: false},
   );
 });

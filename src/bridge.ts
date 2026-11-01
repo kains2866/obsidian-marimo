@@ -4,6 +4,14 @@ import {stopOwnedProcess} from './process-lifecycle';
 import {decodeMessage, type BackendMessage, type Cell} from './protocol';
 import backendSource from '../python/backend.py';
 
+export type RequestMethod = 'run' | 'save' | 'interrupt' | 'stdin';
+
+export interface RequestPayload {
+  cells?: Cell[];
+  /** Answer for a pending `input()`. */
+  value?: string;
+}
+
 export class Backend {
   private process: ChildProcessWithoutNullStreams | null = null;
   private pending = new Map<string, {resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout>}>();
@@ -40,13 +48,18 @@ export class Backend {
     });
   }
 
-  request(method: 'run' | 'save', cells: Cell[]): Promise<void> {
+  request(method: RequestMethod, payload: RequestPayload = {}): Promise<void> {
     if (this.closed || !this.process || this.process.exitCode !== null) return Promise.reject(new Error('Session is not connected'));
     const id = String(++this.serial);
+    // Run/save wait for a whole reactive cycle; interrupt and stdin must answer fast.
+    const long = method === 'run' || method === 'save';
+    const frame: Record<string, unknown> = {id, method};
+    if (long) frame.cells = payload.cells ?? [];
+    else if (method === 'stdin') frame.value = payload.value ?? '';
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {this.pending.delete(id); reject(new Error('Operation timed out; session stopped')); this.close();}, 120_000);
+      const timer = setTimeout(() => {this.pending.delete(id); reject(new Error(`${method} timed out; session stopped`)); this.close();}, long ? 120_000 : 15_000);
       this.pending.set(id, {resolve, reject, timer});
-      this.process!.stdin.write(JSON.stringify({id, method, cells})+'\n', error => {if(error) {clearTimeout(timer); this.pending.delete(id); reject(error);}});
+      this.process!.stdin.write(JSON.stringify(frame)+'\n', error => {if(error) {clearTimeout(timer); this.pending.delete(id); reject(error);}});
     });
   }
   close(): Promise<void> {

@@ -52,6 +52,15 @@ WorkBuddy 对安装源码进行了独立只读调查，提供了路由、通知�
 
 - 2026-11-01：记录真实协议和Temp宿主验证，保留未通过/未验证项。
 
+## 运行时能力（图片 / stdin / 中断）
+
+- 协议核对：中断不是 `completed-run` 的 outcome，而是独立的 `interrupted` 事件，随后的 `completed-run` 仍为 `succeeded`——视图按此顺序处理；`input()` 走 console 的 `stdin` 通道，答案经 `POST /api/kernel/stdin`（`{text}`）返回。
+- 适配层改造：run/save 移入后台任务，读取循环保持应答 `interrupt`/`stdin`；`ready` 在握手后立即发布、首个周期流式转发——启动即调用 `input()` 的笔记本不再死锁（此前会等待 90s 超时后断开）。
+- 真实后端集成测试：stdin 往返（启动期提示→回答→下游 Markdown 显示答案）、中断（20s 睡眠在 1.2s 被取消、会话保留、后续 run 正常）。38 项 Python / 59 项 Node 全部通过。
+- 宿主实证（独立 fixture，含纯标准库生成的 320x120 PNG，不装 matplotlib）：图片渲染、启动期 `input()` 回答、中断后状态「Interrupted · Unsaved」且可继续运行，全部通过；`verify-native-opening.py` 回归通过。期间发现并修复：`completed-run` 后未刷新按钮可用性，导致运行结束后运行按钮保持禁用。
+- 证据：`assets/verify-runtime-features.py`、`assets/runtime-features-verification.json`、`assets/ui3-image-input-interrupted.png`。
+- 仍属边界外：`mo.ui.*` 交互组件、数据库/AI 面板。
+
 ## 界面完善第二轮（参考 ipynb 样式）
 
 针对「焦点环 / 活动行 / 错误色 / 单元格状态 / 提示收纳」五项的原生宿主实证（专用 fixture，不改用户 demo）：

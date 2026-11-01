@@ -17,16 +17,40 @@ export function decodeMessage(line: string): BackendMessage {
   throw new Error('Invalid backend message');
 }
 
-export function safeOutput(value: unknown): {kind: 'text' | 'html' | 'unsupported'; text: string} {
+export interface RenderedOutput {
+  kind: 'text' | 'html' | 'image' | 'unsupported';
+  text: string;
+  /** Set for `image` outputs so the view can build a data URL. */
+  mime?: string;
+}
+
+/** Raster formats a data URL can safely carry; SVG stays out (it can script). */
+const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+
+export function safeOutput(value: unknown): RenderedOutput {
   if (!value || typeof value !== 'object') return {kind: 'unsupported', text: ''};
   const output = value as Record<string, unknown>;
   if (output.mimetype === 'application/vnd.marimo+error' && Array.isArray(output.data)) return {kind:'text',text:output.data.map(error=>typeof error?.msg==='string'?error.msg:JSON.stringify(error)).join('\n')};
+  if (typeof output.mimetype === 'string' && IMAGE_MIMES.has(output.mimetype)) {
+    if (typeof output.data !== 'string') return {kind: 'unsupported', text: output.mimetype};
+    const data = output.data.trim();
+    // Anything that is not plain base64 could smuggle markup into a data URL.
+    if (!BASE64.test(data)) return {kind: 'unsupported', text: output.mimetype};
+    return {kind: 'image', text: data, mime: output.mimetype};
+  }
   if (typeof output.data !== 'string') return {kind: 'unsupported', text: ''};
   if (output.mimetype === 'application/vnd.marimo+traceback') return {kind:'html',text:output.data};
   if (output.mimetype === 'text/plain') return {kind: 'text', text: output.data};
   // marimo 0.25.2 live mo.md() emits pre-rendered HTML under text/markdown.
   if (output.mimetype === 'text/html' || output.mimetype === 'text/markdown') return {kind: 'html', text: output.data};
   return {kind: 'unsupported', text: String(output.mimetype ?? '')};
+}
+
+/** `input()` arrives as a console output on the stdin channel. */
+export function isStdinOutput(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  return (value as Record<string, unknown>).channel === 'stdin';
 }
 
 /**

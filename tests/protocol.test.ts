@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {decodeMessage, isErrorOutput, safeOutput} from '../src/protocol.ts';
+import {decodeMessage, isErrorOutput, isStdinOutput, safeOutput} from '../src/protocol.ts';
 
 test('accepts ready cells without treating code as markup',()=>{
   const result=decodeMessage('{"type":"ready","cells":[{"id":"abc","code":"x = 2"}]}');
@@ -43,4 +43,24 @@ test('ordinary outputs are not mistaken for errors',()=>{
   assert.equal(isErrorOutput({mimetype:'text/markdown',data:'<p>hi</p>'}),false);
   assert.equal(isErrorOutput(null),false);
   assert.equal(isErrorOutput('text'),false);
+});
+
+test('raster images become image outputs with an explicit mime',()=>{
+  const png=safeOutput({channel:'output',mimetype:'image/png',data:'iVBORw0KGgo='});
+  assert.equal(png.kind,'image');
+  assert.equal(png.mime,'image/png');
+  assert.equal(png.text,'iVBORw0KGgo=');
+  assert.equal(safeOutput({mimetype:'image/jpeg',data:'/9j/4AAQ'}).kind,'image');
+});
+test('vector and malformed image payloads are still refused',()=>{
+  assert.equal(safeOutput({mimetype:'image/svg+xml',data:'<svg/>'}).kind,'unsupported');
+  assert.equal(safeOutput({mimetype:'image/png',data:'<svg onload="x"/>'}).kind,'unsupported');
+  assert.equal(safeOutput({mimetype:'image/png',data:'javascript:alert(1)'}).kind,'unsupported');
+  assert.equal(safeOutput({mimetype:'image/png',data:['not','a','string']}).kind,'unsupported');
+});
+
+test('the stdin channel is recognized so the view can prompt',()=>{
+  assert.equal(isStdinOutput({channel:'stdin',mimetype:'text/plain',data:'Your name: '}),true);
+  assert.equal(isStdinOutput({channel:'stdout',mimetype:'text/plain',data:'x'}),false);
+  assert.equal(isStdinOutput(null),false);
 });

@@ -31,8 +31,9 @@ scope:
 | 左 1 | 连接并允许运行 | `plug-zap` | 已识别为 marimo 且未连接 |
 | 左 2 | 运行全部 | `play` | 已连接且未在运行 |
 | 左 3 | 保存 | `save` | 已连接且未在运行 |
-| 左 4 | 停止并断开 | `square` | 已连接或连接中 |
-| 左 5 | 恢复草稿 | `history` | 存在本机草稿且已连接 |
+| 左 4 | 中断运行 | `circle-stop` | 已连接且正在运行；取消当前周期但保留会话与编辑 |
+| 左 5 | 停止并断开 | `square` | 已连接或连接中 |
+| 左 6 | 恢复草稿 | `history` | 存在本机草稿且已连接 |
 | 右侧 | 环境标签 | `terminal` | 常显，`title` 显示完整 Python 路径 |
 | 右侧 | 状态 | — | 常显，`role="status"`、`aria-live="polite"` |
 
@@ -53,6 +54,7 @@ scope:
 | running | 运行中… | Running… | 强调 |
 | finished | 运行结束 | Run finished | 中性 |
 | failed | 运行失败 | Run failed | 错误 |
+| interrupted | 已中断 | Interrupted | 中性 |
 | none | 尚未运行 | Not run yet | 中性 |
 
 修饰：运行后又改过代码追加「代码已修改 / Code modified」；内容尚未写回文件追加「未保存 / Unsaved」，否则在已运行后追加「已保存 / Saved」。
@@ -90,9 +92,12 @@ scope:
 | --- | --- |
 | `text/plain` | `<pre>` 保留换行，`overflow-wrap: anywhere` |
 | `text/markdown` / `text/html` | 经 `sanitizeHTMLToDom` 清洗后插入 |
-| `application/vnd.marimo+traceback` | 同上，错误用 `--text-error` 着色 |
+| `image/png` `image/jpeg` `image/gif` `image/webp` | base64 校验后以 `data:` URL 渲染 `<img>`，SVG 与远程图片一律拒绝 |
+| HTML 内 `<img>` | 仅保留 `data:image/(png\|jpeg\|gif\|webp);base64` 来源，其余删除 |
+| stdin 通道（`input()`） | 渲染等宽输入框与发送按钮；回答后行内替换为 `> 回答`，值经 `POST /api/kernel/stdin` 送回内核 |
+| `application/vnd.marimo+traceback` | 同 HTML 路径，错误用 `--text-error` 着色 |
 | `application/vnd.marimo+error` | 纯文本，逐条错误信息 |
-| 其他（图片、交互组件等） | 一行说明「此输出类型尚未适配：<mime>」，不渲染空容器、不放按钮 |
+| 其他（交互组件、JSON、音视频等） | 一行说明「此输出类型尚未适配：<mime>」，不渲染空容器、不放按钮 |
 
 安全过滤保持不变：脚本、样式、iframe、图片、音视频、表单控件、SVG、MathML 一律移除；`style`、`class`、`id`、`name`、`src`、`href`、`action` 与 `on*` 属性移除；`colspan`/`rowspan` 等表格属性保留。
 
@@ -130,3 +135,4 @@ scope:
 - 2026-11-01：状态改为 inProgress；方案已定，宿主验证仍在进行。
 - 2026-11-01：宿主验证与截图完成（含会话守卫 U2b），状态改为 implemented。
 - 2026-11-01：第二轮完善（参考 obsidian-ipynb 样式）：焦点环、活动行、错误色、单元格状态与提示收纳，见「第二轮完善」。
+- 2026-11-01：第三轮运行时能力：图片输出（含 HTML 内 data URL 白名单）、`input()` 输入框、中断运行按钮与 `interrupted` 状态；工具栏与输出表已同步。

@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {isBlockedAttribute, isBlockedElement} from '../src/output-policy.ts';
+import {isAllowedImageSource, isBlockedAttribute, isBlockedElement} from '../src/output-policy.ts';
 
 test('scriptable and remote-loading elements never reach the view',()=>{
   for(const tag of ['script','style','iframe','object','embed','link','img','svg','math','video','audio','source','input','button','form','textarea','select'])
@@ -22,4 +22,20 @@ test('inline styling and scriptable attributes are stripped',()=>{
 test('table layout attributes survive so outputs stay readable',()=>{
   for(const name of ['colspan','rowspan','scope','title','align','aria-label','data-testid'])
     assert.equal(isBlockedAttribute(name),false,name);
+});
+
+test('only inline raster data URLs may become images',()=>{
+  assert.equal(isAllowedImageSource('data:image/png;base64,iVBORw0KGgo='),true);
+  assert.equal(isAllowedImageSource('data:image/jpeg;base64,/9j/4AAQ'),true);
+  assert.equal(isAllowedImageSource('data:image/gif;base64,R0lGOD'),true);
+  assert.equal(isAllowedImageSource('data:image/webp;base64,UklGRg=='),true);
+});
+test('remote, vector and scripted image sources are refused',()=>{
+  assert.equal(isAllowedImageSource('https://example.com/a.png'),false);
+  assert.equal(isAllowedImageSource('http://127.0.0.1:1234/a.png'),false);
+  assert.equal(isAllowedImageSource('data:image/svg+xml;base64,PHN2Zz4='),false);
+  assert.equal(isAllowedImageSource('data:image/png,<svg onload="x"/>'),false);
+  assert.equal(isAllowedImageSource('javascript:alert(1)'),false);
+  assert.equal(isAllowedImageSource(null),false);
+  assert.equal(isAllowedImageSource(''),false);
 });

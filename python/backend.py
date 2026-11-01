@@ -47,8 +47,10 @@ class NativeSession:
         self.server_token = ""
         self._drain_task = None
         self.layout = None
-        self.initial_events = []
         self.fingerprint = hashlib.sha256(self.filename.read_bytes()).hexdigest()
+        # One reactive cycle at a time: the initial run and user runs share the
+        # websocket and must not read frames concurrently.
+        self._cycle_lock = asyncio.Lock()
 
     def _request(self, path, payload=None):
         data = json.dumps(payload).encode() if payload is not None else None
@@ -123,8 +125,19 @@ class NativeSession:
             raise RuntimeError("Invalid marimo notebook state")
         self.cells = [{"id": cell_id, "code": code, "name": ready["names"][i], "config": ready["configs"][i]} for i, (cell_id, code) in enumerate(zip(ids, codes))]
         self.layout = ready.get("layout")
-        await asyncio.to_thread(self._request, "/api/kernel/instantiate", {"objectIds": [], "values": [], "autoRun": True})
-        self.initial_events = await self._collect_run(publish=False)
+
+    async def instantiate(self):
+        """Run every cell once, streaming events as they happen.
+
+        Streamed rather than collected: a notebook whose top-level code calls
+        ``input()`` must be able to show its prompt and receive an answer while
+        this first cycle is still open.
+        """
+        if self.closed:
+            raise RuntimeError("Session stopped before the first run")
+        async with self._cycle_lock:
+            await asyncio.to_thread(self._request, "/api/kernel/instantiate", {"objectIds": [], "values": [], "autoRun": True})
+            await self._collect_run(publish=True)
 
     async def _collect_run(self, publish=True):
         events = []
@@ -155,12 +168,30 @@ class NativeSession:
             raise RuntimeError("Session stopped; reconnect before running")
         self._validate_cells(cells)
         try:
-            await asyncio.to_thread(self._request, "/api/kernel/run", {"cellIds": [cell["id"] for cell in cells], "codes": [cell["code"] for cell in cells]})
-            return await self._collect_run()
+            # Queue behind the initial cycle instead of reading the same socket.
+            async with self._cycle_lock:
+                if self.closed:
+                    raise RuntimeError("Session stopped; reconnect before running")
+                await asyncio.to_thread(self._request, "/api/kernel/run", {"cellIds": [cell["id"] for cell in cells], "codes": [cell["code"] for cell in cells]})
+                return await self._collect_run()
         except BaseException:
             # A partial cycle cannot safely be reused: never consume its late events as another run.
             await self.close()
             raise
+
+    async def interrupt(self):
+        """Cancel the current run without dropping the session."""
+        if self.closed:
+            raise RuntimeError("Session stopped; reconnect before interrupting")
+        await asyncio.to_thread(self._request, "/api/kernel/interrupt", {})
+
+    async def stdin(self, text):
+        """Answer a pending `input()`; the value is only ever plain text."""
+        if self.closed:
+            raise RuntimeError("Session stopped; reconnect before answering input")
+        if not isinstance(text, str):
+            raise ValueError("stdin requires text")
+        await asyncio.to_thread(self._request, "/api/kernel/stdin", {"text": text})
 
     async def save(self, cells):
         self._validate_cells(cells, all_cells=True)
@@ -238,12 +269,47 @@ async def serve(filename):
             loop.add_signal_handler(sig, task.cancel)
         except (NotImplementedError, RuntimeError):
             pass
+
+    def redact(error):
+        message = str(error).replace(session.token, "[redacted]")
+        if session.server_token:
+            message = message.replace(session.server_token, "[redacted]")
+        return message
+
+    pending = set()
+    stop_reading = False
+
+    async def handle_run(request, request_id):
+        # Runs happen off the reader loop: `interrupt` and `stdin` must stay
+        # answerable while a cell is executing.
+        try:
+            method, cells = request["method"], request["cells"]
+            if method == "run":
+                await session.run(cells)
+            else:
+                await session.save(cells)
+            emit({"type": "result", "id": request_id})
+        except Exception as error:
+            emit({"type": "result", "id": request_id, "error": redact(error)})
+            if session.closed:
+                emit({"type": "error", "error": "Session stopped after an incomplete operation; reconnect"})
+
     try:
         await session.start()
         emit({"type": "ready", "cells": session.cells})
-        for event in session.initial_events:
-            emit({"type": "event", "data": event})
-        while True:
+
+        async def handle_initial():
+            # Streams the first cycle so `input()` prompts can be answered while
+            # the notebook is still starting up.
+            try:
+                await session.instantiate()
+            except Exception as error:
+                emit({"type": "error", "error": redact(error)})
+
+        initial = asyncio.create_task(handle_initial())
+        pending.add(initial)
+        initial.add_done_callback(pending.discard)
+        while not stop_reading:
             line = await asyncio.to_thread(sys.stdin.readline)
             if not line:
                 break
@@ -251,28 +317,33 @@ async def serve(filename):
             try:
                 request = json.loads(line)
                 request_id = str(request["id"])
-                method, cells = request["method"], request["cells"]
-                if method == "run":
-                    await session.run(cells)
-                elif method == "save":
-                    await session.save(cells)
+                method = request["method"]
+                if method in ("run", "save"):
+                    running = asyncio.create_task(handle_run(request, request_id))
+                    pending.add(running)
+                    running.add_done_callback(pending.discard)
+                elif method == "interrupt":
+                    await session.interrupt()
+                    emit({"type": "result", "id": request_id})
+                elif method == "stdin":
+                    await session.stdin(request.get("value"))
+                    emit({"type": "result", "id": request_id})
                 else:
                     raise ValueError("Unsupported operation")
-                emit({"type": "result", "id": request_id})
             except Exception as error:
-                message = str(error).replace(session.token, "[redacted]").replace(session.server_token, "[redacted]") if session.server_token else str(error).replace(session.token, "[redacted]")
-                emit({"type": "result", "id": request_id, "error": message})
+                emit({"type": "result", "id": request_id, "error": redact(error)})
                 if session.closed:
                     emit({"type": "error", "error": "Session stopped after an incomplete operation; reconnect"})
-                    break
+                    stop_reading = True
     except asyncio.CancelledError:
         pass
     except Exception as error:
-        message = str(error).replace(session.token, "[redacted]")
-        if session.server_token:
-            message = message.replace(session.server_token, "[redacted]")
-        emit({"type": "error", "error": message})
+        emit({"type": "error", "error": redact(error)})
     finally:
+        for running in list(pending):
+            running.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
         await session.close()
 
 

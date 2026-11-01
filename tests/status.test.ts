@@ -41,20 +41,20 @@ test('status text is translated without changing structure',()=>{
 });
 
 test('actions are unavailable before a real session exists',()=>{
-  assert.deepEqual(toolbarAvailability({connection:'disconnected',run:'none',ready:true,hasDraft:false}),{connect:true,runAll:false,save:false,stop:false,restore:false});
-  assert.deepEqual(toolbarAvailability({connection:'connecting',run:'none',ready:true,hasDraft:true}),{connect:false,runAll:false,save:false,stop:true,restore:false});
+  assert.deepEqual(toolbarAvailability({connection:'disconnected',run:'none',ready:true,hasDraft:false}),{connect:true,runAll:false,save:false,stop:false,restore:false,interrupt:false});
+  assert.deepEqual(toolbarAvailability({connection:'connecting',run:'none',ready:true,hasDraft:true}),{connect:false,runAll:false,save:false,stop:true,restore:false,interrupt:false});
 });
 test('a connected idle session can run and save, and can stop',()=>{
-  assert.deepEqual(toolbarAvailability({connection:'connected',run:'none',ready:true,hasDraft:false}),{connect:false,runAll:true,save:true,stop:true,restore:false});
+  assert.deepEqual(toolbarAvailability({connection:'connected',run:'none',ready:true,hasDraft:false}),{connect:false,runAll:true,save:true,stop:true,restore:false,interrupt:false});
 });
 test('busy runs block duplicate run and save requests but keep stop available',()=>{
-  assert.deepEqual(toolbarAvailability({connection:'connected',run:'running',ready:true,hasDraft:true}),{connect:false,runAll:false,save:false,stop:true,restore:false});
+  assert.deepEqual(toolbarAvailability({connection:'connected',run:'running',ready:true,hasDraft:true}),{connect:false,runAll:false,save:false,stop:true,restore:false,interrupt:true});
 });
 test('stopping blocks every action including a second stop',()=>{
-  assert.deepEqual(toolbarAvailability({connection:'connected',run:'none',ready:true,hasDraft:false,stopping:true}),{connect:false,runAll:false,save:false,stop:false,restore:false});
+  assert.deepEqual(toolbarAvailability({connection:'connected',run:'none',ready:true,hasDraft:false,stopping:true}),{connect:false,runAll:false,save:false,stop:false,restore:false,interrupt:false});
 });
 test('an ordinary Python script cannot be connected or restored',()=>{
-  assert.deepEqual(toolbarAvailability({connection:'disconnected',run:'none',ready:false,hasDraft:true}),{connect:false,runAll:false,save:false,stop:false,restore:false});
+  assert.deepEqual(toolbarAvailability({connection:'disconnected',run:'none',ready:false,hasDraft:true}),{connect:false,runAll:false,save:false,stop:false,restore:false,interrupt:false});
 });
 test('the restore action needs both a draft and a live session',()=>{
   assert.equal(toolbarAvailability({connection:'connected',run:'none',ready:true,hasDraft:true}).restore,true);
@@ -92,6 +92,12 @@ test('the prototype notice shows before a session and hides once connected',()=>
   assert.equal(showPrototypeInfo({ready:true,connection:'connecting'}),true);
   assert.equal(showPrototypeInfo({ready:true,connection:'connected'}),false);
   assert.equal(showPrototypeInfo({ready:false,connection:'disconnected'}),false);
+});
+
+test('an interrupted run is stated plainly instead of looking successful',()=>{
+  assert.deepEqual(statusView({...base,connection:'connected',run:'interrupted'},zh),{text:'已中断 · 已保存',tone:'muted',busy:false});
+  assert.equal(statusView({...base,connection:'connected',run:'interrupted',dirty:true,changedSinceRun:true},zh).text,'已中断 · 代码已修改 · 未保存');
+  assert.equal(statusView({...base,connection:'connected',run:'interrupted'},en).text,'Interrupted · Saved');
 });
 
 test('a superseded request must not overwrite the state of a newer session',()=>{

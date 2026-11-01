@@ -245,6 +245,13 @@
 .marimo-native-html > :first-child { margin-top: 0; }
 .marimo-native-html > :last-child { margin-bottom: 0; }
 .marimo-native-html img,
+.marimo-native-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 4px 0;
+  border-radius: var(--radius-s);
+}
 .marimo-native-html svg { display: none; }
 .marimo-native-html table {
   border-collapse: collapse;
@@ -270,6 +277,46 @@
   font-size: var(--font-ui-smaller);
   font-style: italic;
 }
+
+/* `input()` prompt: a local box whose answer is sent to the kernel. */
+.marimo-native-stdin {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 0;
+  font-family: var(--font-monospace);
+  font-size: var(--code-size);
+}
+.marimo-native-stdin-prompt { color: var(--text-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.marimo-native-stdin-input {
+  flex: 1 1 160px;
+  min-width: 120px;
+  height: 28px;
+  padding: 2px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  font-size: var(--code-size);
+}
+.marimo-native-stdin-input:focus-visible { border-color: var(--interactive-accent); outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
+.marimo-native-stdin-send {
+  height: 28px;
+  padding: 2px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  box-shadow: none;
+  cursor: pointer;
+}
+.marimo-native-stdin-send:hover:not(:disabled) { background: var(--background-modifier-hover); }
+.marimo-native-stdin.is-sending { opacity: .6; }
+.marimo-native-stdin.is-answered .marimo-native-stdin-answer { color: var(--text-normal); }
+.marimo-native-stdin.is-answered .marimo-native-stdin-prompt { color: var(--interactive-accent); }
 
 .marimo-native-empty {
   padding: 40px 20px;

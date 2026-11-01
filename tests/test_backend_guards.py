@@ -37,6 +37,29 @@ class GuardTests(unittest.IsolatedAsyncioTestCase):
                 await self.session.start()
             spawn.assert_not_called()
 
+    async def test_interrupt_targets_the_kernel_endpoint(self):
+        with patch.object(self.session, '_request', return_value='{}') as request:
+            await self.session.interrupt()
+        self.assertEqual(request.call_args.args[0], '/api/kernel/interrupt')
+
+    async def test_stdin_forwards_text_to_the_stdin_endpoint(self):
+        with patch.object(self.session, '_request', return_value='{}') as request:
+            await self.session.stdin('Kains')
+        self.assertEqual(request.call_args.args[0], '/api/kernel/stdin')
+        self.assertEqual(request.call_args.args[1], {'text': 'Kains'})
+
+    async def test_stdin_rejects_non_text_values(self):
+        for value in (None, 42, {'text': 'x'}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                await self.session.stdin(value)
+
+    async def test_stopped_session_refuses_interrupt_and_stdin(self):
+        self.session.closed = True
+        with self.assertRaises(RuntimeError):
+            await self.session.interrupt()
+        with self.assertRaises(RuntimeError):
+            await self.session.stdin('x')
+
     async def test_close_cleans_process_even_when_websocket_close_fails(self):
         self.session.ws = AsyncMock()
         self.session.ws.close.side_effect = OSError('socket already broken')

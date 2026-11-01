@@ -84,6 +84,16 @@ scope:
 - [x] 回归：`assets/verify-native-opening.py` 在新构建上重跑通过；`assets/verify-ui-polish.py` 为本轮专用实证脚本，结果存 `assets/ui-polish-verification.json`。
 - 未实测项：真实深色系统主题（仍以 body 类近似）；触屏设备上的状态可发现性。
 
+### U7 运行时能力（图片输出 / stdin / 中断）
+
+- [x] 测试先行：`safeOutput` 图片分支、`isAllowedImageSource`、`isStdinOutput`、`interrupted` 状态与 `interrupt` 可用性（Node 59 项全绿）；Python 新增 stdin/中断守卫与两项真实后端集成测试（38 项全绿）。
+- [x] 适配层并发化：serve 循环把 run/save 放入后台任务，`interrupt` 与 `stdin` 在运行中仍可应答；`ready` 改为握手后立即发布，首个周期流式转发（启动即 `input()` 不再死锁），初始周期与用户 run 共用 `_cycle_lock`。
+- [x] 中断：协议核实为独立 `interrupted` 事件 + `completed-run(succeeded)`；适配层新增 `/api/kernel/interrupt`。宿主实测：20s 睡眠单元格中断后状态「Interrupted」、会话保留、后续 run 正常。
+- [x] stdin：`input()` 以 console `stdin` 通道到达，输出区渲染输入框；宿主实测启动即阻塞的 `input()` 能收到「Your name?」并回答，下游 `mo.md` 显示回答值。
+- [x] 图片：`image/png|jpeg|gif|webp` base64 校验后渲染；HTML 内 `<img>` 仅放行内联 data URL。宿主实测 `_repr_png_` 320x120 渐变图正常显示（纯标准库生成，不依赖 matplotlib）。
+- [x] 宿主实证：`assets/verify-runtime-features.py` 全部断言通过，截图 `assets/ui3-image-input-interrupted.png`，结果 `assets/runtime-features-verification.json`；`verify-native-opening.py` 回归通过。
+- 未实测项：`mo.ui.*` 交互组件（明确不在本轮范围）；真实深色主题下的图片显示。
+
 ## 测试命令
 
 ```bash
@@ -101,3 +111,4 @@ npm run build
 - 2026-11-01：按实际进度回落为 inProgress；仅勾选已实测子项，补齐「运行中可停止」与会话守卫条目。
 - 2026-11-01：会话守卫（U2b）全部实测通过，全量验证与截图完成，状态改为 implemented。
 - 2026-11-01：新增 U6 第二轮完善（参考 obsidian-ipynb 样式），五项打磨全部实施并宿主实证。
+- 2026-11-01：新增 U7 运行时能力（图片输出、stdin、中断），适配层并发化，全部实施并宿主实证。

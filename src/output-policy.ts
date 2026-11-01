@@ -29,3 +29,13 @@ export function isBlockedAttribute(name: string): boolean {
   const lower = name.trim().toLowerCase();
   return ATTRIBUTES.has(lower) || lower.startsWith('on');
 }
+
+/**
+ * Inline raster data URLs are the one image source allowed through: they cannot
+ * reach the network and cannot carry script. Vector formats stay blocked.
+ */
+const IMAGE_DATA_URL = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/i;
+
+export function isAllowedImageSource(src: string | null | undefined): boolean {
+  return typeof src === 'string' && IMAGE_DATA_URL.test(src.trim());
+}

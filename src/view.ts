@@ -6,8 +6,8 @@ import {defaultKeymap, history, historyKeymap} from '@codemirror/commands';
 import {syntaxHighlighting} from '@codemirror/language';
 import {Backend} from './bridge';
 import {nativeHighlight} from './editor-theme';
-import {isErrorOutput, safeOutput, type BackendMessage, type Cell} from './protocol';
-import {isBlockedAttribute, isBlockedElement} from './output-policy';
+import {isErrorOutput, isStdinOutput, safeOutput, type BackendMessage, type Cell} from './protocol';
+import {isAllowedImageSource, isBlockedAttribute, isBlockedElement} from './output-policy';
 import {canAdoptClaim, connectionState, environmentLabel, normalizeCellStatus, shouldApplyResult, shouldApplyStopResult, showPrototypeInfo, statusView, toolbarAvailability, type CellStatus, type ConnectionState, type RunPhase} from './status';
 import {fileFromViewState} from './file-state';
 import {inspectSource} from './inspection';
@@ -43,6 +43,7 @@ export class MarimoView extends EditableFileView {
   private runButton!: HTMLButtonElement;
   private saveButton!: HTMLButtonElement;
   private stopButton!: HTMLButtonElement;
+  private interruptButton!: HTMLButtonElement;
   private restoreButton!: HTMLButtonElement;
   private notice!: HTMLElement;
   private previewNote!: HTMLElement;
@@ -89,6 +90,8 @@ export class MarimoView extends EditableFileView {
     this.saveButton.disabled = !available.save;
     this.stopButton.disabled = !available.stop;
     this.restoreButton.hidden = !available.restore;
+    this.interruptButton.hidden = !available.interrupt;
+    this.interruptButton.disabled = !available.interrupt;
     this.info.hidden = !showPrototypeInfo({ready:this.notebookReady, connection:this.connection()});
     this.body.querySelectorAll<HTMLButtonElement>('button[data-action="run-cell"]').forEach(button => {button.disabled = !available.runAll;});
     this.updateStatus();
@@ -167,6 +170,8 @@ export class MarimoView extends EditableFileView {
     this.connectButton.addClass('mod-cta');
     this.runButton = this.createAction('run-all', this.plugin.t('运行全部','Run all'), 'play', true, () => void this.perform('run', this.readCells()));
     this.saveButton = this.createAction('save', this.plugin.t('保存','Save'), 'save', false, () => void this.perform('save', this.readCells()));
+    this.interruptButton = this.createAction('interrupt', this.plugin.t('中断运行','Interrupt run'), 'circle-stop', true, () => void this.interrupt());
+    this.interruptButton.hidden = true;
     this.stopButton = this.createAction('stop', this.plugin.t('停止并断开','Stop and disconnect'), 'square', false, () => void this.stop());
     this.restoreButton = this.createAction('restore', this.plugin.t('恢复草稿','Restore draft'), 'history', false, () => this.restoreDraft());
     this.controls = [this.runButton, this.saveButton];
@@ -281,7 +286,7 @@ export class MarimoView extends EditableFileView {
     if(method==='run'){this.runPhase='running';this.changedSinceRun=false;}
     this.updateControls();
     try {
-      await backend.request(method, cells);
+      await backend.request(method, {cells});
       if(!shouldApplyResult({backend,operation},{backend:this.backend,operation:this.operation})) return;
       if(method==='save') {
         this.dirty = JSON.stringify(this.readCells())!==JSON.stringify(cells);
@@ -300,6 +305,34 @@ export class MarimoView extends EditableFileView {
     }
   }
 
+  /** Cancel the in-flight run but keep the kernel and the edits. */
+  private async interrupt(): Promise<void> {
+    if(!this.backend || this.closed || this.connecting || this.stopping || this.runPhase!=='running') return;
+    const backend=this.backend;
+    try { await backend.request('interrupt'); }
+    catch(error) { if(this.backend===backend && !this.closed) this.showNotice(String(error),'error'); }
+    // The run request is still in flight; it publishes `interrupted` itself.
+    if(!this.closed) this.updateControls();
+  }
+
+  /** Answer a pending `input()`; the prompt row is replaced by the answer. */
+  private async answerStdin(value:string, row:HTMLElement): Promise<void> {
+    const backend=this.backend;
+    if(!backend||row.classList.contains('is-sending')) return;
+    row.classList.add('is-sending');
+    try {
+      await backend.request('stdin', {value});
+      row.removeClass('is-sending');
+      row.empty();
+      row.addClass('is-answered');
+      row.createSpan({cls:'marimo-native-stdin-prompt',text:'>'});
+      row.createSpan({cls:'marimo-native-stdin-answer',text:value});
+    } catch(error) {
+      row.removeClass('is-sending');
+      this.showNotice(String(error),'error');
+    }
+  }
+
   private receive(frame: BackendMessage): void {
     if(this.closed) return;
     if(frame.type==='ready') {
@@ -311,15 +344,27 @@ export class MarimoView extends EditableFileView {
       }
       this.cells=frame.cells; this.renderCells(false);
       if(edits)this.applyDraftCodes(edits);
-      // `ready` follows the backend's initial instantiate+run: cells already executed.
-      this.runPhase='finished';
+      // The adapter streams the first cycle after `ready`, so the notebook is
+      // executing at this point; `completed-run` publishes the final phase.
+      this.runPhase='running';
       this.changedSinceRun=false;
       this.updateControls();
     }
     if(frame.type==='error') {this.disconnect();this.showNotice(frame.error,'error');this.updateControls();}
     if(frame.type!=='event') return;
     const data = frame.data;
-    if(data.op==='completed-run' && data.outcome==='failed') {this.runPhase='failed'; this.updateStatus(); return;}
+    // marimo announces an interrupt with its own event; the following
+    // `completed-run` still reports `succeeded`, so order matters here.
+    if(data.op==='interrupted') {this.runPhase='interrupted'; this.updateControls(); return;}
+    if(data.op==='completed-run') {
+      // `interrupted` must not read as a failure or as a successful run.
+      if(data.outcome==='failed') this.runPhase='failed';
+      else if(data.outcome==='interrupted') this.runPhase='interrupted';
+      else if(this.runPhase!=='interrupted') this.runPhase='finished';
+      // Availability changes with the phase: run replaces interrupt.
+      this.updateControls();
+      return;
+    }
     if(data.op!=='cell-op') return;
     const target = this.outputs.get(String(data.cell_id));
     if(!target) return;
@@ -403,21 +448,37 @@ export class MarimoView extends EditableFileView {
   }
 
   private renderOutput(target: HTMLElement, raw: unknown): void {
+    if(isStdinOutput(raw)) {this.renderStdinPrompt(target, raw); return;}
     const output=safeOutput(raw);
     // Failures keep their channel/mime so the view can apply the error tone.
     const errorClass=isErrorOutput(raw)?' is-error':'';
+    if(output.kind==='image' && output.mime) {
+      // `safeOutput` already restricted this to base64 raster data.
+      const image=target.createEl('img',{cls:'marimo-native-image'});
+      image.src=`data:${output.mime};base64,${output.text}`;
+      image.alt=this.plugin.t('图像输出','Image output');
+      return;
+    }
     if(output.kind==='text') {if(output.text)target.createEl('pre',{cls:'marimo-native-text'+errorClass,text:output.text}); return;}
     if(output.kind==='html') {
       const fragment=sanitizeHTMLToDom(output.text);
       // marimo emits placeholder markup such as `<div></div>`; an output block with
       // no text and no visible structure must not reserve space or draw a divider.
       const visibleText=!!fragment.textContent?.trim();
-      const visibleStructure=!!fragment.querySelector('pre,table,ul,ol,blockquote,hr,figure,code,h1,h2,h3,h4,h5,h6');
+      const visibleStructure=!!fragment.querySelector('pre,table,ul,ol,blockquote,hr,figure,code,h1,h2,h3,h4,h5,h6,img');
       if(!visibleText && !visibleStructure) return;
+      // Inline raster data URLs survive; every other image source is dropped.
+      fragment.querySelectorAll('img').forEach(image=>{
+        const src=image.getAttribute('src');
+        if(!isAllowedImageSource(src)) {image.remove(); return;}
+        for(const attr of Array.from(image.attributes)) if(attr.name!=='src'&&attr.name!=='alt') image.removeAttribute(attr.name);
+        image.setAttribute('src',(src??'').trim());
+      });
       // Static-only: no scripts, remote resources or interactive components.
-      fragment.querySelectorAll('*').forEach(node=>{if(isBlockedElement(node.tagName))node.remove();});
+      fragment.querySelectorAll('*').forEach(node=>{if(node.tagName==='IMG')return;if(isBlockedElement(node.tagName))node.remove();});
       fragment.querySelectorAll('span.paragraph').forEach(node=>{const paragraph=document.createElement('p');paragraph.append(...Array.from(node.childNodes));node.replaceWith(paragraph);});
       fragment.querySelectorAll('*').forEach(node=>{
+        if(node.tagName==='IMG')return;
         for(const attr of Array.from(node.attributes)) if(isBlockedAttribute(attr.name))node.removeAttribute(attr.name);
       });
       const wrapper=target.createDiv({cls:'marimo-native-html'+errorClass});
@@ -425,6 +486,23 @@ export class MarimoView extends EditableFileView {
       return;
     }
     target.createDiv({cls:'marimo-native-unsupported',text:this.plugin.t('此输出类型尚未适配：','Output type not yet supported: ')+output.text});
+  }
+
+  /** `input()` prompt with a local answer box; the answer goes to the kernel. */
+  private renderStdinPrompt(target: HTMLElement, raw: unknown): void {
+    const prompt = typeof (raw as Record<string,unknown>)?.data === 'string' ? String((raw as Record<string,unknown>).data) : '';
+    const row=target.createDiv({cls:'marimo-native-stdin'});
+    row.createSpan({cls:'marimo-native-stdin-prompt',text:prompt||this.plugin.t('输入：','Input: ')});
+    const input=row.createEl('input',{cls:'marimo-native-stdin-input',type:'text'});
+    input.setAttr('aria-label',this.plugin.t('输入内容','Input value'));
+    const send=row.createEl('button',{cls:'marimo-native-stdin-send',text:this.plugin.t('发送','Send')});
+    send.setAttr('aria-label',this.plugin.t('发送输入','Send input'));
+    const submit=()=>void this.answerStdin(input.value,row);
+    input.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();submit();}});
+    send.onclick=submit;
+    // The run is blocked until this is answered, so bring it into view.
+    row.scrollIntoView({block:'nearest'});
+    input.focus();
   }
 
   // ------------------------------------------------------------ cell status

@@ -1,7 +1,19 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {isAllowedImageSource, isBlockedAttribute, isBlockedElement} from '../src/output-policy.ts';
+import {adaptMarimoTex, isAllowedImageSource, isBlockedAttribute, isBlockedElement} from '../src/output-policy.ts';
 
+test('marimo tex wrappers become dollar-delimited math text',()=>{
+  assert.equal(
+    adaptMarimoTex('<span class="paragraph">Euler: <marimo-tex class="arithmatex">||(e^{i\\\\pi} + 1 = 0||)</marimo-tex></span>'),
+    '<span class="paragraph">Euler: $e^{i\\\\pi} + 1 = 0$</span>',
+  );
+  assert.equal(
+    adaptMarimoTex('<marimo-tex class="arithmatex">||[x^2||]</marimo-tex>'),
+    '$$x^2$$',
+  );
+  // Malformed wrappers stay untouched; nothing is executed either way.
+  assert.equal(adaptMarimoTex('<marimo-tex>oops</marimo-tex>'), '<marimo-tex>oops</marimo-tex>');
+});
 test('scriptable and remote-loading elements never reach the view',()=>{
   for(const tag of ['script','style','iframe','object','embed','link','img','svg','math','video','audio','source','input','button','form','textarea','select'])
     assert.equal(isBlockedElement(tag),true,tag);

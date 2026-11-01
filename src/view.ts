@@ -1,4 +1,4 @@
-import {EditableFileView, Notice, Scope, sanitizeHTMLToDom, setIcon, type WorkspaceLeaf, type TFile, type ViewStateResult} from 'obsidian';
+import {EditableFileView, MarkdownRenderer, Notice, Scope, sanitizeHTMLToDom, setIcon, type WorkspaceLeaf, type TFile, type ViewStateResult} from 'obsidian';
 import {EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter} from '@codemirror/view';
 import {Compartment, EditorState} from '@codemirror/state';
 import {python} from '@codemirror/lang-python';
@@ -10,7 +10,8 @@ import {insertCell, moveCell, nextCellId, removeCell} from './cells';
 import {cellPresentation, mergeCellConfig, readCellConfig, wireConfig, type CellConfig} from './cell-config';
 import {nativeHighlight} from './editor-theme';
 import {isErrorOutput, isStdinOutput, safeOutput, type BackendMessage, type Cell} from './protocol';
-import {isAllowedImageSource, isBlockedAttribute, isBlockedElement} from './output-policy';
+import {isAllowedImageSource, adaptMarimoTex, isBlockedAttribute, isBlockedElement} from './output-policy';
+import {parseMarkdownCell} from './markdown-cell';
 import {canAdoptClaim, cellActions, connectionState, environmentLabel, normalizeCellStatus, shouldApplyResult, shouldApplyStopResult, showPrototypeInfo, statusView, toolbarAvailability, type CellStatus, type ConnectionState, type RunPhase} from './status';
 import {fileFromViewState} from './file-state';
 import {inspectSource} from './inspection';
@@ -76,6 +77,13 @@ export class MarimoView extends EditableFileView {
   /** The open per-cell popover, if any, and its outside-click handler. */
   private cellMenu: HTMLElement|null = null;
   private menuDismiss: ((event:Event)=>void)|null = null;
+  /** Rendered markdown preview per markdown cell; the code stays folded. */
+  private markdownPreviews = new Map<string, HTMLElement>();
+  /** Markdown cells whose Python source the user explicitly opened. */
+  private markdownSourceOpen = new Set<string>();
+  private markdownTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Guards `MarkdownRenderer.render` races: only the latest pass may paint. */
+  private markdownSeqs = new Map<string, number>();
   constructor(leaf: WorkspaceLeaf, private plugin: MarimoPlugin) {super(leaf);}
   isClosed():boolean {return this.closed;}
   getViewType(): string {return VIEW_TYPE;}
@@ -494,7 +502,13 @@ export class MarimoView extends EditableFileView {
     const consoleEl=target.querySelector<HTMLElement>('.marimo-native-console')!;
     if(data.output) {
       if((data.output as Record<string,unknown>).channel==='marimo-error')this.runPhase='failed';
-      display.empty(); this.renderOutput(display, data.output);
+      // A markdown cell paints itself locally with Obsidian's renderer; the
+      // kernel's pre-rendered copy would only duplicate it. Console output and
+      // errors always pass through.
+      const row=target.closest('.marimo-native-cell');
+      const suppress=!!row?.classList.contains('is-markdown') && (data.output as Record<string,unknown>).mimetype==='text/markdown';
+      display.empty();
+      if(!suppress)this.renderOutput(display, data.output);
     }
     if(Array.isArray(data.console)) {if(data.console.length===0)consoleEl.empty(); else for(const output of data.console)this.renderOutput(consoleEl,output);}
     else if(data.console) this.renderOutput(consoleEl,data.console);
@@ -509,7 +523,11 @@ export class MarimoView extends EditableFileView {
   private renderCells(readOnly=false): void {
     this.sourceEditor?.destroy();this.sourceEditor=null;
     for(const editor of this.editors.values()) editor.view.destroy();
-    this.editors.clear(); this.outputs.clear(); this.body.empty();
+    this.editors.clear(); this.outputs.clear();
+    this.markdownPreviews.clear(); this.markdownSourceOpen.clear(); this.markdownSeqs.clear();
+    for(const timer of this.markdownTimers.values()) clearTimeout(timer);
+    this.markdownTimers.clear();
+    this.body.empty();
     this.previewNote.hidden = !readOnly;
     if(readOnly) this.previewNote.setText(this.plugin.t('只读预览 · 连接后可编辑并运行单元格','Read-only preview · Connect to edit and run cells'));
     if(!this.cells.length) {
@@ -544,6 +562,20 @@ export class MarimoView extends EditableFileView {
     run.onclick=()=>void this.runCell(cell.id);
 
     const content=row.createDiv({cls:'marimo-native-cell-content'});
+    // A cell that is just `mo.md(<literal>)` is prose: Obsidian renders its
+    // markdown natively and the Python wrapper stays folded until asked for.
+    const markdown=this.plugin.settings.renderMarkdown?parseMarkdownCell(cell.code):null;
+    if(markdown) {
+      row.addClass('is-markdown');
+      if(this.markdownSourceOpen.has(cell.id)) row.addClass('is-source-open');
+    }
+    const preview=content.createDiv({cls:'marimo-native-markdown'});
+    preview.setAttr('aria-label',this.plugin.t('Markdown 单元格 · 点击编辑源码','Markdown cell · click to edit source'));
+    if(markdown) {
+      this.markdownPreviews.set(cell.id,preview);
+      preview.addEventListener('click',()=>{this.openMarkdownSource(cell.id);});
+      void this.renderMarkdownPreview(cell.id,markdown.markdown);
+    }
     const host=content.createDiv({cls:'marimo-native-editor'});
     const editable=new Compartment();
     const editor=new EditorView({parent:host,state:EditorState.create({doc:cell.code,extensions:[editable.of([EditorState.readOnly.of(readOnly),EditorView.editable.of(!readOnly)]),python(),lineNumbers(),highlightActiveLine(),highlightActiveLineGutter(),history(),
@@ -562,12 +594,16 @@ export class MarimoView extends EditableFileView {
         this.updateStatus();
         // The code no longer matches what the kernel executed.
         this.markCellStale(cell.id);
+        this.scheduleMarkdownRefresh(cell.id);
       }
     }),EditorView.theme({'&':{fontFamily:'var(--font-monospace)',fontSize:'var(--code-size)'},'.cm-content':{caretColor:'var(--text-normal)'},'.cm-gutters':{backgroundColor:'transparent',color:'var(--text-faint)',border:'none'},'&.cm-focused':{outline:'none'}})]})});
     this.editors.set(cell.id,{view:editor,editable});
     if(!readOnly) {
       // Hover-revealed so the notebook reads as prose, not as a control panel.
       const actions=content.createDiv({cls:'marimo-native-cell-actions'});
+      // Only meaningful on markdown rows; CSS hides it everywhere else so the
+      // button can appear the moment an edit turns a cell into prose.
+      this.cellAction(actions,'cell-source','code',this.plugin.t('查看/折叠源码','Toggle source'),() => this.toggleMarkdownSource(cell.id));
       this.cellAction(actions,'cell-insert','plus',this.plugin.t('在下方插入单元格','Insert cell below'),() => void this.insertAfter(cell.id));
       this.cellAction(actions,'cell-up','arrow-up',this.plugin.t('上移','Move up'),() => this.shiftCell(cell.id,-1));
       this.cellAction(actions,'cell-down','arrow-down',this.plugin.t('下移','Move down'),() => this.shiftCell(cell.id,1));
@@ -594,6 +630,83 @@ export class MarimoView extends EditableFileView {
     if(run)run.disabled=presentation.disabled;
     // CodeMirror measures on its own, but a hidden host has a zero size.
     if(!presentation.hideCode)this.editors.get(cellId)?.view.requestMeasure();
+  }
+
+  // ------------------------------------------------------------ markdown cells
+
+  /** Folded source is one click away; folding again repaints the preview. */
+  private toggleMarkdownSource(cellId:string): void {
+    const row=this.rowFor(cellId);
+    if(!row)return;
+    if(row.hasClass('is-source-open'))this.closeMarkdownSource(cellId);
+    else this.openMarkdownSource(cellId);
+  }
+  private openMarkdownSource(cellId:string): void {
+    const row=this.rowFor(cellId);
+    if(!row||!row.hasClass('is-markdown'))return;
+    row.addClass('is-source-open');
+    this.markdownSourceOpen.add(cellId);
+    this.editors.get(cellId)?.view.focus();
+  }
+  private closeMarkdownSource(cellId:string): void {
+    this.rowFor(cellId)?.removeClass('is-source-open');
+    this.markdownSourceOpen.delete(cellId);
+    this.refreshMarkdownNow(cellId);
+  }
+
+  private scheduleMarkdownRefresh(cellId:string): void {
+    const timer=this.markdownTimers.get(cellId);
+    if(timer)clearTimeout(timer);
+    this.markdownTimers.set(cellId,setTimeout(()=>{
+      this.markdownTimers.delete(cellId);
+      this.refreshMarkdownNow(cellId);
+    },250));
+  }
+
+  /**
+   * Re-parse the edited code: repaint the preview while it stays static
+   * markdown, or fall back to a plain kernel-driven cell when it does not.
+   */
+  private refreshMarkdownNow(cellId:string): void {
+    const row=this.rowFor(cellId);
+    const editor=this.editors.get(cellId);
+    if(!row||!editor)return;
+    const parsed=parseMarkdownCell(editor.view.state.doc.toString());
+    if(!parsed) {
+      row.removeClass('is-markdown','is-source-open');
+      this.markdownSourceOpen.delete(cellId);
+      // The stale preview must not linger next to the real kernel output.
+      this.markdownPreviews.get(cellId)?.empty();
+      this.markdownPreviews.delete(cellId);
+      editor.view.requestMeasure();
+      return;
+    }
+    row.addClass('is-markdown');
+    // A previous non-markdown edit dropped the container registration; the
+    // preview element itself is still in the row, so re-attach it.
+    const preview=row.querySelector<HTMLElement>('.marimo-native-markdown');
+    if(preview)this.markdownPreviews.set(cellId,preview);
+    if(!row.hasClass('is-source-open'))void this.renderMarkdownPreview(cellId,parsed.markdown);
+  }
+
+  /** Paint the cell's markdown with Obsidian's own renderer. */
+  private async renderMarkdownPreview(cellId:string, text:string): Promise<void> {
+    const target=this.markdownPreviews.get(cellId);
+    if(!target)return;
+    const seq=(this.markdownSeqs.get(cellId)??0)+1;
+    this.markdownSeqs.set(cellId,seq);
+    const sink=document.createElement('div');
+    try{
+      await MarkdownRenderer.render(this.app,text,sink,this.filename,this);
+    }catch(error){
+      // A failed render must not leave a blank cell; plain text stays readable.
+      console.error('marimo markdown render failed',error);
+      sink.createDiv({cls:'marimo-native-text',text});
+    }
+    // A newer edit or a rebuilt row owns the container now.
+    if(seq!==this.markdownSeqs.get(cellId)||this.markdownPreviews.get(cellId)!==target)return;
+    target.empty();
+    while(sink.firstChild)target.appendChild(sink.firstChild);
   }
 
   /**
@@ -914,8 +1027,9 @@ export class MarimoView extends EditableFileView {
     if(output.kind==='text') {if(output.text)target.createEl('pre',{cls:'marimo-native-text'+errorClass,text:output.text}); return;}
     if(output.kind==='html') {
       // Custom elements never survive the host sanitizer, so widgets are lifted
-      // out of the raw string and the rest is sanitized as usual.
-      const extracted=extractUiElements(output.text);
+      // out of the raw string and the rest is sanitized as usual. marimo's
+      // LaTeX wrapper cannot survive either, so it is unwrapped first.
+      const extracted=extractUiElements(adaptMarimoTex(output.text));
       const fragment=sanitizeHTMLToDom(extracted.html);
       // marimo emits placeholder markup such as `<div></div>`; an output block with
       // no text and no visible structure must not reserve space or draw a divider.

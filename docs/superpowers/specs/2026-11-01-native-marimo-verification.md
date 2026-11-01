@@ -153,3 +153,16 @@ WorkBuddy 对安装源码进行了独立只读调查，提供了路由、通知�
 测试：`tests/cell-config.test.ts`（配置解析/合并/线格式/呈现）、`tests/test_editing.py`（真实内核：配置周期与保存、禁用语义、格式化校验、补全、关闭拒绝）、`tests/cells.test.ts`（nextCellId）、`tests/status.test.ts` 与 `tests/session-guard.test.ts`（runStale/format 可用性）。Node 89 项、Python 61 项全部通过；typecheck/build 通过；dist 与 Temp 安装 sha256 一致。
 
 本轮仍未验证：多列布局渲染、`hide_code` 单元格在未连接时的呈现、补全在长会话中的性能、Windows/Linux。
+
+## Markdown 单元格自动渲染（P2）
+
+结论：marimo 0.25.2 对 `mo.md()` 单元格输出 `text/markdown` MIME、内容为预渲染 HTML（`<span class="markdown prose …">`，LaTeX 包裹为 `<marimo-tex>||[…||]</marimo-tex>`）。静态 `mo.md(<字符串字面量>)` 单元格改为由 Obsidian 自己的 Markdown 引擎本地渲染，Python 包装折叠隐藏；f-string 等动态 md 单元格保持普通代码单元格，其 `text/markdown` 输出走净化 HTML 管道并先把 `||(||)` 分隔符还原为 `$…$`（`marimo-tex` 自定义元素过不了净化器）。隐式顶层字符串单元格内核按 repr 输出，不视为 markdown，视图不与其分歧。
+
+- 解析器 `src/markdown-cell.ts`：仅接受单个 `mo.md(<literal>)` 表达式（允许前后整行注释）；支持三引号（渲染前 dedent）、转义解码、raw 前缀、f-string 无插值（`{{`→`{`）；插值、多语句、多参数、未闭合一律拒绝（保持代码单元格）。
+- 视图：markdown 行预览先行、源码折叠；点击预览或 `<>` 按钮展开源码，折叠时重绘预览；编辑防抖 250ms 重解析，改为非 markdown 时回退普通单元格并清空旧预览；渲染竞态按单元格序号防护，失败兜底纯文本；连接重建行后内核 `text/markdown` 输出被抑制避免重复渲染，console/错误照常。
+- 设置项「自动渲染 Markdown 单元格」（默认开，重载生效）。
+- 期间发现并修复：非 markdown → markdown 往返编辑后容器注册被删，预览永久空白——现重新挂载行内预览元素。
+- 宿主实证（`assets/verify-markdown-render.py`）：只读未连接即渲染（标题/粗体/列表/KaTeX 公式 `e^{iπ}+1=0`/内链 `[[demo-note]]`、编辑器高度 0）；f-string 单元格保持代码态且运行后显示 `n=2`；markdown 行内核输出抑制（display 空）；点击预览展开源码、`<>` 按钮折叠；编辑源码预览实时追加条目；改为 `x = 1\nmo.md(...)` 回退代码单元格、改回后重新渲染。截图 `ui7-markdown-light.png`、`ui7-markdown-dark.png`；证据 `markdown-verification.json`。fixture 与首次失败运行的孤儿进程/文件均已清理，Temp 回到 demo 只读预览。
+- 测试：`tests/markdown-cell.test.ts` 10 项、`tests/output-policy.test.ts` 增 marimo-tex 还原。Node 100 项、Python 61 项全部通过；typecheck/build 通过；dist 三文件与 Temp 安装 sha256 一致。
+
+本轮仍未验证：markdown 单元格内引用 vault 图片的相对路径解析、`mo.md` 多段拼接（`mo.as_html`）、Windows/Linux。

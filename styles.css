@@ -183,6 +183,32 @@
 /* Clamped output scrolls inside its box instead of pushing the page down. */
 .marimo-native-cell.is-output-clamped .marimo-native-output { max-height: 420px; overflow-y: auto; }
 
+/* ------------------------------------------------------- markdown cells */
+
+/* A markdown cell reads as prose: the preview leads, the Python source
+   stays folded until the reader asks for it. */
+.marimo-native-markdown { padding: 2px 0; }
+.marimo-native-markdown:empty { display: none; }
+/* A cell that stopped being markdown shows only its kernel output. */
+.marimo-native-cell:not(.is-markdown) .marimo-native-markdown { display: none; }
+.marimo-native-cell.is-markdown .marimo-native-markdown {
+  cursor: text;
+  border-radius: var(--radius-s);
+  transition: background-color .12s ease;
+}
+.marimo-native-cell.is-markdown .marimo-native-markdown:hover { background: var(--background-modifier-hover); }
+/* The kernel's copy is suppressed in code, so an empty output draws nothing. */
+.marimo-native-cell.is-markdown .marimo-native-output:not(.has-output) { display: none; }
+
+.marimo-native-cell.is-markdown:not(.is-source-open) .marimo-native-editor { display: none; }
+/* The source toggle only exists on markdown rows. */
+.marimo-native-cell:not(.is-markdown) button[data-action="cell-source"] { display: none; }
+.marimo-native-cell.is-markdown.is-source-open .marimo-native-editor {
+  border-left: 2px solid var(--background-modifier-border);
+  padding-left: 8px;
+  margin: 4px 0 6px;
+}
+
 /* The per-cell popover: same actions as the host menu, but ours to verify. */
 .marimo-native-cell-menu {
   position: absolute;

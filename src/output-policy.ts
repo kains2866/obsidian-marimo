@@ -39,3 +39,15 @@ const IMAGE_DATA_URL = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={
 export function isAllowedImageSource(src: string | null | undefined): boolean {
   return typeof src === 'string' && IMAGE_DATA_URL.test(src.trim());
 }
+
+/**
+ * marimo renders LaTeX as `<marimo-tex>||(...||)</marimo-tex>`; the custom tag
+ * cannot survive sanitization, so the delimiter form is unwrapped to plain
+ * `$...$` / `$$...$$` text the reader can still parse.
+ */
+export function adaptMarimoTex(html: string): string {
+  // The wrapper opens with `||(` or `||[` and closes with `||)` or `||]`.
+  return html
+    .replace(/<marimo-tex[^>]*>\|\|\[([\s\S]*?)\|\|\]<\/marimo-tex>/g, '$$$$$1$$$$')
+    .replace(/<marimo-tex[^>]*>\|\|\(([\s\S]*?)\|\|\)<\/marimo-tex>/g, '$$$1$$');
+}

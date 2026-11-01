@@ -221,6 +221,9 @@ export class MarimoView extends EditableFileView {
         // A draft is worth advertising before connecting: the read-only
         // preview already shows the restore offer.
         this.refreshRecovery();
+        // Opening the file is intention enough: start the kernel right away,
+        // like "new notebook" already does, instead of a second click.
+        if(this.plugin.settings.autoConnect)void this.autoConnect();
       }
       else this.showSource(source, this.plugin.t('普通 Python 脚本 · 只读','Python script · read-only'));
       this.updateControls();
@@ -620,9 +623,14 @@ export class MarimoView extends EditableFileView {
       this.markdownMode.add(cell.id);
       if(this.markdownSourceOpen.has(cell.id)) row.addClass('is-source-open');
     }
+    // Native marimo gives markdown cells their own editor chrome: a compact
+    // formatting toolbar, shown only while the cell is being edited.
+    if(markdown&&!readOnly)this.markdownToolbar(content,cell.id);
     const host=content.createDiv({cls:'marimo-native-editor'});
     const editable=new Compartment();
-    const editor=new EditorView({parent:host,state:EditorState.create({doc:markdown?markdown.markdown:cell.code,extensions:[editable.of([EditorState.readOnly.of(readOnly),EditorView.editable.of(!readOnly)]),python(),lineNumbers(),highlightActiveLine(),highlightActiveLineGutter(),history(),
+    // A markdown cell edits prose: no Python tokens, no kernel completion.
+    const language=markdown?[]:[python(),autocompletion({override:[context=>this.completeAt(cell.id,context)],activateOnTyping:true})];
+    const editor=new EditorView({parent:host,state:EditorState.create({doc:markdown?markdown.markdown:cell.code,extensions:[editable.of([EditorState.readOnly.of(readOnly),EditorView.editable.of(!readOnly)]),...language,lineNumbers(),highlightActiveLine(),highlightActiveLineGutter(),history(),
       // Notebook gestures come before the default keymap so Shift-Enter runs
       // instead of inserting a newline.
       keymap.of([
@@ -635,7 +643,6 @@ export class MarimoView extends EditableFileView {
         {key:'Mod-Shift-1', run:()=>{this.moveCellEdge(cell.id,'top');return true;}},
         {key:'Mod-Shift-2', run:()=>{this.moveCellEdge(cell.id,'bottom');return true;}},
       ]),
-      autocompletion({override:[context=>this.completeAt(cell.id,context)],activateOnTyping:true}),
       keymap.of([...defaultKeymap,...historyKeymap]),syntaxHighlighting(nativeHighlight),EditorView.lineWrapping,EditorView.updateListener.of(update=>{
       if(update.focusChanged&&update.view.hasFocus)this.selectCell(cell.id);
       if(update.docChanged){
@@ -648,6 +655,17 @@ export class MarimoView extends EditableFileView {
       }
     }),EditorView.theme({'&':{fontFamily:'var(--font-monospace)',fontSize:'var(--code-size)'},'.cm-content':{caretColor:'var(--text-normal)'},'.cm-gutters':{backgroundColor:'transparent',color:'var(--text-faint)',border:'none'},'&.cm-focused':{outline:'none'}})]})});
     this.editors.set(cell.id,{view:editor,editable});
+    if(markdown&&!readOnly) {
+      // Native behavior: clicking away collapses the editor and leaves the
+      // pure rendered view, exactly like marimo's hide_code markdown cells.
+      editor.dom.addEventListener('focusout',()=>{
+        setTimeout(()=>{
+          if(this.closed)return;
+          const live=this.rowFor(cell.id);
+          if(live&&live.classList.contains('is-source-open')&&!live.contains(document.activeElement))this.closeMarkdownSource(cell.id);
+        },0);
+      });
+    }
     if(!readOnly) {
       // Hover-revealed so the notebook reads as prose, not as a control panel.
       const actions=content.createDiv({cls:'marimo-native-cell-actions'});
@@ -712,6 +730,77 @@ export class MarimoView extends EditableFileView {
     this.rowFor(cellId)?.removeClass('is-source-open');
     this.markdownSourceOpen.delete(cellId);
     this.refreshMarkdownNow(cellId);
+  }
+
+  /** Native-style markdown chrome: bold/italic/code/heading/link/list. */
+  private markdownToolbar(host:HTMLElement, cellId:string): void {
+    const bar=host.createDiv({cls:'marimo-native-md-toolbar'});
+    bar.setAttribute('role','toolbar');
+    bar.setAttribute('aria-label',this.plugin.t('Markdown 格式','Markdown formatting'));
+    const tool=(action:string,icon:string,label:string,onClick:()=>void)=>{
+      const button=bar.createEl('button',{cls:'marimo-native-md-tool'});
+      button.dataset.mdAction=action;
+      button.setAttr('aria-label',label);
+      button.setAttr('title',label);
+      setIcon(button,icon);
+      button.onclick=event=>{event.preventDefault();onClick();};
+      return button;
+    };
+    const wrap=(before:string,after:string)=>this.wrapMarkdownSelection(cellId,before,after);
+    tool('md-bold','bold',this.plugin.t('加粗','Bold'),()=>wrap('**','**'));
+    tool('md-italic','italic',this.plugin.t('斜体','Italic'),()=>wrap('*','*'));
+    tool('md-code','code',this.plugin.t('代码','Code'),()=>wrap('`','`'));
+    tool('md-heading','heading-2',this.plugin.t('标题','Heading'),()=>this.cycleMarkdownLines(cellId,'## '));
+    tool('md-link','link',this.plugin.t('链接','Link'),()=>wrap('[',']()'));
+    tool('md-list','list',this.plugin.t('列表','List'),()=>this.cycleMarkdownLines(cellId,'- '));
+  }
+
+  /**
+   * Wrap the selection with markers; a second click unwraps, whether the
+   * selection itself carries the markers or they sit just outside it (the
+   * common "select the word, click bold twice" flow).
+   */
+  private wrapMarkdownSelection(cellId:string,before:string,after:string): void {
+    const editor=this.editors.get(cellId)?.view;
+    if(!editor)return;
+    const sel=editor.state.selection.main;
+    const text=editor.state.sliceDoc(sel.from,sel.to);
+    if(text.startsWith(before)&&text.endsWith(after)&&text.length>=before.length+after.length) {
+      // The markers are part of the selection: keep the interior only.
+      const inner=text.slice(before.length,text.length-after.length);
+      editor.dispatch({changes:{from:sel.from,to:sel.to,insert:inner},selection:{anchor:sel.from,head:sel.from+inner.length}});
+      editor.focus();
+      return;
+    }
+    const outerFrom=sel.from-before.length;
+    const outerTo=sel.to+after.length;
+    if(outerFrom>=0&&outerTo<=editor.state.doc.length
+      &&editor.state.sliceDoc(outerFrom,sel.from)===before
+      &&editor.state.sliceDoc(sel.to,outerTo)===after) {
+      // The markers hug the selection: drop them and keep the word selected.
+      editor.dispatch({changes:[{from:outerFrom,to:sel.from,insert:''},{from:sel.to,to:outerTo,insert:''}],selection:{anchor:outerFrom,head:outerFrom+(sel.to-sel.from)}});
+      editor.focus();
+      return;
+    }
+    editor.dispatch({changes:{from:sel.from,to:sel.to,insert:before+text+after},selection:{anchor:sel.from+before.length,head:sel.from+before.length+text.length}});
+    editor.focus();
+  }
+
+  /** Toggle a line prefix (heading level or list marker) over the selection. */
+  private cycleMarkdownLines(cellId:string,prefix:string): void {
+    const editor=this.editors.get(cellId)?.view;
+    if(!editor)return;
+    const sel=editor.state.selection.main;
+    const first=editor.state.doc.lineAt(sel.from).number;
+    const last=editor.state.doc.lineAt(sel.to).number;
+    const lines=Array.from({length:last-first+1},(_,index)=>editor.state.doc.line(first+index));
+    const marked=lines.every(line=>line.text.startsWith(prefix));
+    const pattern=prefix==='## '?/^#{1,6}\s*/:/^(?:[-*]|\d+\.)\s+/;
+    editor.dispatch({changes:lines.map(line=>{
+      const stripped=line.text.replace(pattern,'');
+      return {from:line.from,to:line.to,insert:marked?stripped:prefix+stripped};
+    })});
+    editor.focus();
   }
 
   /**

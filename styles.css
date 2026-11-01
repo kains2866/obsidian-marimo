@@ -186,8 +186,9 @@
 /* ------------------------------------------------------- markdown cells */
 
 /* A markdown cell reads as prose: the render leads, the editor stays folded
-   until the reader asks for it. */
-.marimo-native-markdown { padding: 2px 0; }
+   until the reader asks for it. Horizontal padding mirrors the output area so
+   the text never hugs the hover background. */
+.marimo-native-markdown { padding: 8px 14px; }
 .marimo-native-markdown:empty { display: none; }
 /* A cell that stopped being markdown shows only its kernel output. */
 .marimo-native-cell:not(.is-markdown) .marimo-native-markdown { display: none; }
@@ -215,6 +216,31 @@
 .marimo-native-cell.is-markdown.is-source-open .marimo-native-editor {
   margin: 4px 0 0;
 }
+
+/* The markdown formatting row: native-marimo chrome, visible only while the
+   cell is being edited. */
+.marimo-native-md-toolbar { display: none; }
+.marimo-native-cell.is-source-open .marimo-native-md-toolbar {
+  display: flex;
+  gap: 2px;
+  padding: 2px 6px 0;
+}
+.marimo-native-md-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.marimo-native-md-tool:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.marimo-native-md-tool svg { width: 14px; height: 14px; }
 
 /* The per-cell popover: same actions as the host menu, but ours to verify. */
 .marimo-native-cell-menu {
@@ -326,8 +352,8 @@
 .marimo-native-editor {
   padding: 6px 0;
   background: var(--background-secondary);
-  /* Keep short cells readable instead of collapsing to one line. */
-  min-height: max(56px, calc(var(--font-text-size, 16px) * 3.2));
+  /* Compact like the marimo editor: one line of code is one line tall. */
+  min-height: max(36px, calc(var(--font-text-size, 16px) * 2.4));
   font-size: var(--font-text-size);
 }
 .marimo-native-editor .cm-editor { background: transparent; }

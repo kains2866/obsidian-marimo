@@ -5,10 +5,11 @@ import {python} from '@codemirror/lang-python';
 import {defaultKeymap, history, historyKeymap} from '@codemirror/commands';
 import {syntaxHighlighting} from '@codemirror/language';
 import {Backend} from './bridge';
+import {insertCell, moveCell, removeCell} from './cells';
 import {nativeHighlight} from './editor-theme';
 import {isErrorOutput, isStdinOutput, safeOutput, type BackendMessage, type Cell} from './protocol';
 import {isAllowedImageSource, isBlockedAttribute, isBlockedElement} from './output-policy';
-import {canAdoptClaim, connectionState, environmentLabel, normalizeCellStatus, shouldApplyResult, shouldApplyStopResult, showPrototypeInfo, statusView, toolbarAvailability, type CellStatus, type ConnectionState, type RunPhase} from './status';
+import {canAdoptClaim, cellActions, connectionState, environmentLabel, normalizeCellStatus, shouldApplyResult, shouldApplyStopResult, showPrototypeInfo, statusView, toolbarAvailability, type CellStatus, type ConnectionState, type RunPhase} from './status';
 import {fileFromViewState} from './file-state';
 import {inspectSource} from './inspection';
 import inspectorSource from '../python/inspect_notebook.py';
@@ -40,6 +41,7 @@ export class MarimoView extends EditableFileView {
   private body!: HTMLElement;
   private controls: HTMLButtonElement[] = [];
   private connectButton!: HTMLButtonElement;
+  private addButton!: HTMLButtonElement;
   private runButton!: HTMLButtonElement;
   private saveButton!: HTMLButtonElement;
   private stopButton!: HTMLButtonElement;
@@ -52,6 +54,8 @@ export class MarimoView extends EditableFileView {
   private closed = false;
   private closing:Promise<void>|null=null;
   private dirty = false;
+  /** Codes of the notebook exactly as read from the file; drafts compare against it. */
+  private baseCodes: string[] = [];
   private runPhase: RunPhase = 'none';
   private changedSinceRun = false;
   private stopping = false;
@@ -94,7 +98,24 @@ export class MarimoView extends EditableFileView {
     this.interruptButton.disabled = !available.interrupt;
     this.info.hidden = !showPrototypeInfo({ready:this.notebookReady, connection:this.connection()});
     this.body.querySelectorAll<HTMLButtonElement>('button[data-action="run-cell"]').forEach(button => {button.disabled = !available.runAll;});
+    this.updateCellActions();
     this.updateStatus();
+  }
+
+  /** Structural actions depend on the cell's position, so they are set per row. */
+  private updateCellActions(): void {
+    if(!this.body) return;
+    const state = {connection:this.connection(), run:this.runPhase, busy:this.busy};
+    if(this.addButton) this.addButton.disabled = !cellActions({...state, count:this.cells.length, index:-1}).add;
+    const rows = Array.from(this.body.querySelectorAll<HTMLElement>('.marimo-native-cell'));
+    rows.forEach((row, index) => {
+      const available = cellActions({...state, count:rows.length, index});
+      const button = (action:string) => row.querySelector<HTMLButtonElement>(`button[data-action="${action}"]`);
+      const insert = button('cell-insert'); if(insert) insert.disabled = !available.add;
+      const up = button('cell-up'); if(up) up.disabled = !available.up;
+      const down = button('cell-down'); if(down) down.disabled = !available.down;
+      const remove = button('cell-remove'); if(remove) remove.disabled = !available.remove;
+    });
   }
   private refreshEnvironment(): void {
     const python = this.plugin.getPythonPath();
@@ -117,7 +138,7 @@ export class MarimoView extends EditableFileView {
     const generation=++this.loadGeneration;
     this.inspection?.abort();
     const inspection=new AbortController();this.inspection=inspection;
-    this.filename=file.path;this.closed=false;this.notebookReady=false;this.connecting=false;
+    this.filename=file.path;this.closed=false;this.notebookReady=false;this.connecting=false;this.baseCodes=[];
     this.runPhase='none';this.changedSinceRun=false;this.dirty=false;this.stopping=false;
     this.hasDraft=false;this.selectedId=null;
     this.showNotice('','info');
@@ -134,7 +155,7 @@ export class MarimoView extends EditableFileView {
         return;
       }
       this.notebookReady=preview.isMarimo;
-      if(preview.isMarimo){this.cells=preview.cells;this.renderCells(true);}
+      if(preview.isMarimo){this.cells=preview.cells;this.baseCodes=preview.cells.map(cell=>cell.code);this.renderCells(true);}
       else this.showSource(source, this.plugin.t('普通 Python 脚本 · 只读','Python script · read-only'));
       this.updateControls();
     }catch(error){
@@ -153,7 +174,7 @@ export class MarimoView extends EditableFileView {
     this.loadGeneration++;this.inspection?.abort();this.connecting=false;this.stopping=false;
     this.disconnect();
     this.filename=file.path;
-    if(this.dirty)this.plugin.saveRecovery(this.filename,this.readCells(),this.cells.map(c=>c.code));
+    if(this.dirty)this.plugin.saveRecovery(this.filename,this.readCells(),[...this.baseCodes]);
     this.showNotice(this.plugin.t('文件已重命名，请重新连接。','File renamed; reconnect to continue.'),'info');
     this.updateControls();
   }
@@ -168,6 +189,7 @@ export class MarimoView extends EditableFileView {
 
     this.connectButton = this.createAction('connect', this.plugin.t('连接并运行','Connect and run'), 'plug-zap', true, () => void this.connect());
     this.connectButton.addClass('mod-cta');
+    this.addButton = this.createAction('add-cell', this.plugin.t('新增单元格','Add cell'), 'plus', false, () => void this.insertAfter(this.selectedId));
     this.runButton = this.createAction('run-all', this.plugin.t('运行全部','Run all'), 'play', true, () => void this.perform('run', this.readCells()));
     this.saveButton = this.createAction('save', this.plugin.t('保存','Save'), 'save', false, () => void this.perform('save', this.readCells()));
     this.interruptButton = this.createAction('interrupt', this.plugin.t('中断运行','Interrupt run'), 'circle-stop', true, () => void this.interrupt());
@@ -260,7 +282,7 @@ export class MarimoView extends EditableFileView {
     this.backend=null;
     this.connecting=false;
     this.busy=false;
-    if(this.dirty)try{this.plugin.saveRecovery(this.filename,this.readCells(),this.cells.map(c=>c.code));}catch(error){new Notice(String(error));}
+    if(this.dirty)try{this.plugin.saveRecovery(this.filename,this.readCells(),[...this.baseCodes]);}catch(error){new Notice(String(error));}
     this.setCellsReadOnly();
     this.clearCellStatuses();
     const lease=this.lease;this.lease=null;
@@ -291,6 +313,7 @@ export class MarimoView extends EditableFileView {
       if(method==='save') {
         this.dirty = JSON.stringify(this.readCells())!==JSON.stringify(cells);
         this.cells=cells.map(cell=>({...cell}));
+        this.baseCodes=cells.map(cell=>cell.code);
         if(!this.dirty)this.plugin.recovery.remove(this.filename);
         this.refreshRecovery();
       } else if(this.runPhase==='running') this.runPhase='finished';
@@ -336,19 +359,22 @@ export class MarimoView extends EditableFileView {
   private receive(frame: BackendMessage): void {
     if(this.closed) return;
     if(frame.type==='ready') {
+      // The draft is compared against the file it was taken from, never against
+      // the edited model, which may now hold added or removed cells.
       const edits=this.dirty?this.readCells():null;
-      if(edits && JSON.stringify(this.cells.map(c=>c.code))!==JSON.stringify(frame.cells.map(c=>c.code))) {
+      const fileCodes=frame.cells.map(cell=>cell.code);
+      if(edits && JSON.stringify(this.baseCodes)!==JSON.stringify(fileCodes)) {
         this.disconnect();
         this.showNotice(this.plugin.t('原文件已变化，编辑草稿已保留。','Original file changed; edited draft retained.'),'error');
         return;
       }
-      this.cells=frame.cells; this.renderCells(false);
-      if(edits)this.applyDraftCodes(edits);
+      this.cells=frame.cells; this.baseCodes=fileCodes; this.renderCells(false);
       // The adapter streams the first cycle after `ready`, so the notebook is
       // executing at this point; `completed-run` publishes the final phase.
       this.runPhase='running';
       this.changedSinceRun=false;
       this.updateControls();
+      if(edits) void this.reapplyLocal(edits);
     }
     if(frame.type==='error') {this.disconnect();this.showNotice(frame.error,'error');this.updateControls();}
     if(frame.type!=='event') return;
@@ -401,7 +427,7 @@ export class MarimoView extends EditableFileView {
     this.updateControls();
   }
 
-  private renderCell(cell:Cell, readOnly:boolean): void {
+  private renderCell(cell:Cell, readOnly:boolean): HTMLElement {
     const row=this.body.createDiv({cls:'marimo-native-cell'});
     row.dataset.cellId = cell.id;
     row.addEventListener('pointerdown',()=>this.selectCell(cell.id));
@@ -428,16 +454,166 @@ export class MarimoView extends EditableFileView {
       }
     }),EditorView.theme({'&':{fontFamily:'var(--font-monospace)',fontSize:'var(--code-size)'},'.cm-content':{caretColor:'var(--text-normal)'},'.cm-gutters':{backgroundColor:'transparent',color:'var(--text-faint)',border:'none'},'&.cm-focused':{outline:'none'}})]})});
     this.editors.set(cell.id,{view:editor,editable});
+    if(!readOnly) {
+      // Hover-revealed so the notebook reads as prose, not as a control panel.
+      const actions=content.createDiv({cls:'marimo-native-cell-actions'});
+      this.cellAction(actions,'cell-insert','plus',this.plugin.t('在下方插入单元格','Insert cell below'),() => void this.insertAfter(cell.id));
+      this.cellAction(actions,'cell-up','arrow-up',this.plugin.t('上移','Move up'),() => this.shiftCell(cell.id,-1));
+      this.cellAction(actions,'cell-down','arrow-down',this.plugin.t('下移','Move down'),() => this.shiftCell(cell.id,1));
+      this.cellAction(actions,'cell-remove','trash-2',this.plugin.t('删除此单元格','Delete this cell'),() => void this.deleteCell(cell.id));
+    }
     const output=content.createDiv({cls:'marimo-native-output markdown-rendered'});
     output.createDiv({cls:'marimo-native-display'});
     output.createDiv({cls:'marimo-native-console'});
     this.outputs.set(cell.id,output);
+    return row;
+  }
+
+  private cellAction(parent:HTMLElement, action:string, icon:string, label:string, onClick:()=>void):HTMLButtonElement {
+    const button=parent.createEl('button',{cls:'marimo-native-cell-action'});
+    button.dataset.action=action;
+    button.setAttr('aria-label',label);
+    button.setAttr('title',label);
+    setIcon(button,icon);
+    button.onclick=event=>{event.stopPropagation();onClick();};
+    return button;
   }
 
   private selectCell(id:string, force=false): void {
     if(this.selectedId===id && !force) return;
     this.selectedId=id;
     this.body.querySelectorAll<HTMLElement>('.marimo-native-cell').forEach(row=>{row.toggleClass('is-selected',row.dataset.cellId===id);});
+  }
+
+  // ------------------------------------------------------- cell structure
+
+  /** Structural edits own the session like a run does: one operation at a time. */
+  private canEditStructure():boolean {
+    return !!this.backend && !this.busy && !this.closed && !this.connecting && !this.stopping;
+  }
+  private markStructuralChange():void {
+    this.dirty=true;
+    if(this.runPhase!=='none')this.changedSinceRun=true;
+  }
+  private structureFailed(backend:Backend, operation:number, error:unknown):void {
+    if(!shouldApplyResult({backend,operation},{backend:this.backend,operation:this.operation}))return;
+    if(!this.closed){this.disconnect();this.showNotice(String(error),'error');new Notice(String(error));}
+  }
+
+  /** Insert an empty cell after `afterId`; with no selection it goes last. */
+  private async insertAfter(afterId:string|null):Promise<void> {
+    const backend=this.backend;
+    if(!backend||!this.canEditStructure())return;
+    const operation=++this.operation;
+    this.busy=true;this.updateControls();
+    try {
+      const created=await backend.request('create');
+      if(!shouldApplyResult({backend,operation},{backend:this.backend,operation:this.operation}))return;
+      const id=created.cellId;
+      if(!id)throw new Error(this.plugin.t('适配层未返回单元格标识','The adapter did not return a cell id'));
+      const cells=this.readCells();
+      const at=afterId===null?-1:cells.findIndex(cell=>cell.id===afterId);
+      const index=at<0?cells.length:at+1;
+      this.markStructuralChange();
+      this.cells=insertCell(cells,{id,code:''},index);
+      // Only the new row is built: re-rendering every cell would throw away the
+      // outputs the kernel already produced for the others.
+      const row=this.renderCell(this.cells[index],false);
+      const anchor=afterId===null?null:this.body.querySelector<HTMLElement>(`.marimo-native-cell[data-cell-id="${CSS.escape(afterId)}"]`);
+      if(anchor)anchor.after(row);
+      this.selectedId=id;
+      this.selectCell(id,true);
+      this.updateControls();
+      this.editors.get(id)?.view.focus();
+    } catch(error) {
+      this.structureFailed(backend,operation,error);
+    } finally {
+      if(operation===this.operation){this.busy=false;if(!this.closed)this.updateControls();}
+    }
+  }
+
+  private async deleteCell(cellId:string):Promise<void> {
+    const backend=this.backend;
+    // A notebook keeps at least one cell: an empty app cannot be saved.
+    if(!backend||!this.canEditStructure()||this.cells.length<=1)return;
+    const operation=++this.operation;
+    this.busy=true;this.updateControls();
+    try {
+      await backend.request('delete',{cellId});
+      if(!shouldApplyResult({backend,operation},{backend:this.backend,operation:this.operation}))return;
+      const cells=this.readCells();
+      const index=cells.findIndex(cell=>cell.id===cellId);
+      if(index<0)return;
+      this.markStructuralChange();
+      this.cells=removeCell(cells,cellId);
+      this.dropRow(cellId);
+      const neighbour=this.cells[Math.min(index,this.cells.length-1)];
+      this.selectedId=neighbour?.id??null;
+      if(this.selectedId)this.selectCell(this.selectedId,true);
+      this.updateControls();
+    } catch(error) {
+      this.structureFailed(backend,operation,error);
+    } finally {
+      if(operation===this.operation){this.busy=false;if(!this.closed)this.updateControls();}
+    }
+  }
+
+  private dropRow(cellId:string):void {
+    this.editors.get(cellId)?.view.destroy();
+    this.editors.delete(cellId);
+    this.outputs.delete(cellId);
+    this.body.querySelector<HTMLElement>(`.marimo-native-cell[data-cell-id="${CSS.escape(cellId)}"]`)?.remove();
+  }
+
+  private rowFor(cellId:string):HTMLElement|null {
+    return this.body.querySelector<HTMLElement>(`.marimo-native-cell[data-cell-id="${CSS.escape(cellId)}"]`);
+  }
+
+  /** The model order always follows the rows, so the two cannot drift apart. */
+  private orderFromDom(cells:Cell[]):Cell[] {
+    const byId=new Map(cells.map(cell=>[cell.id,cell]));
+    return Array.from(this.body.querySelectorAll<HTMLElement>('.marimo-native-cell'))
+      .map(row=>byId.get(row.dataset.cellId??''))
+      .filter((cell):cell is Cell=>cell!==undefined);
+  }
+
+  /** Reordering is local: only the save request decides the file order. */
+  private shiftCell(cellId:string, delta:number):void {
+    if(!this.canEditStructure())return;
+    const cells=this.readCells();
+    const from=cells.findIndex(cell=>cell.id===cellId);
+    const next=moveCell(cells,from,from+delta);
+    if(next.every((cell,index)=>cell.id===cells[index].id))return;
+    const row=this.rowFor(cellId);
+    const sibling=delta<0?row?.previousElementSibling:row?.nextElementSibling;
+    if(!row||!(sibling instanceof HTMLElement)||!sibling.classList.contains('marimo-native-cell'))return;
+    // Moving the row instead of rebuilding it keeps editors, outputs and scroll.
+    if(delta<0)sibling.before(row); else sibling.after(row);
+    this.cells=this.orderFromDom(next);
+    this.markStructuralChange();
+    this.selectedId=cellId;
+    this.selectCell(cellId,true);
+    this.updateControls();
+    this.editors.get(cellId)?.view.focus();
+  }
+
+  /**
+   * Make the live notebook match `target`: drop what the target lacks, recreate
+   * cells whose ids died with an earlier kernel, and keep the target's order.
+   */
+  private async adoptCells(backend:Backend, target:Cell[]):Promise<Cell[]> {
+    const current=this.readCells();
+    const currentIds=new Set(current.map(cell=>cell.id));
+    const targetIds=new Set(target.map(cell=>cell.id));
+    for(const cell of current) if(!targetIds.has(cell.id)) await backend.request('delete',{cellId:cell.id});
+    const resolved:Cell[]=[];
+    for(const cell of target) {
+      if(currentIds.has(cell.id)) {resolved.push({id:cell.id,code:cell.code}); continue;}
+      const created=await backend.request('create');
+      if(!created.cellId)throw new Error(this.plugin.t('适配层未返回单元格标识','The adapter did not return a cell id'));
+      resolved.push({id:created.cellId,code:cell.code});
+    }
+    return resolved;
   }
 
   private syncOutputState(target:HTMLElement): void {
@@ -532,24 +708,51 @@ export class MarimoView extends EditableFileView {
     }catch(error){this.hasDraft=false;new Notice(String(error));}
     this.updateControls();
   }
-  private applyDraftCodes(cells:Cell[]):void {
-    this.cells.forEach((cell,i)=>{const editor=this.editors.get(cell.id)?.view;if(editor&&cells[i])editor.dispatch({changes:{from:0,to:editor.state.doc.length,insert:cells[i].code}});});
-    this.dirty=true;this.updateStatus();
-  }
-  private restoreDraft():void {
+  /** Put pending local edits back onto a freshly connected session. */
+  private async reapplyLocal(edits:Cell[]):Promise<void> {
+    const backend=this.backend;
+    if(!backend)return;
+    const operation=this.operation;
+    this.busy=true;this.updateControls();
     try {
-      const draft=this.plugin.recovery.read(this.filename);if(!draft||!this.backend)return;
-      if(JSON.stringify(draft.baseCodes)!==JSON.stringify(this.cells.map(c=>c.code)))throw new Error(this.plugin.t('原文件与草稿基线不同，草稿保留供手动恢复。','Draft baseline differs from the file; draft retained for manual recovery.'));
-      this.applyDraftCodes(draft.cells);
-      this.showNotice(this.plugin.t('草稿已恢复，尚未运行。','Draft restored; not executed.'),'info');
-    }catch(error){new Notice(String(error));}
+      this.cells=await this.adoptCells(backend,edits);
+      if(!shouldApplyResult({backend,operation},{backend:this.backend,operation:this.operation}))return;
+      if(this.selectedId && !this.cells.some(cell=>cell.id===this.selectedId)) this.selectedId=this.cells[0]?.id??null;
+      this.markStructuralChange();
+      this.renderCells(false);
+    } catch(error) {
+      this.structureFailed(backend,operation,error);
+    } finally {
+      if(operation===this.operation){this.busy=false;if(!this.closed)this.updateControls();}
+    }
+  }
+  private async restoreDraft():Promise<void> {
+    try {
+      const draft=this.plugin.recovery.read(this.filename);const backend=this.backend;
+      if(!draft||!backend||!this.canEditStructure())return;
+      if(JSON.stringify(draft.baseCodes)!==JSON.stringify(this.baseCodes))throw new Error(this.plugin.t('原文件与草稿基线不同，草稿保留供手动恢复。','Draft baseline differs from the file; draft retained for manual recovery.'));
+      const operation=++this.operation;
+      this.busy=true;this.updateControls();
+      try {
+        // A restored draft may add or remove cells, so it is adopted wholesale
+        // instead of being written into an assumed one-to-one cell list.
+        this.cells=await this.adoptCells(backend,draft.cells);
+        if(!shouldApplyResult({backend,operation},{backend:this.backend,operation:this.operation}))return;
+        this.selectedId=this.cells[0]?.id??null;
+        this.markStructuralChange();
+        this.renderCells(false);
+        this.showNotice(this.plugin.t('草稿已恢复，尚未运行。','Draft restored; not executed.'),'info');
+      } finally {
+        if(operation===this.operation){this.busy=false;if(!this.closed)this.updateControls();}
+      }
+    } catch(error){new Notice(String(error));}
   }
 
   // ---------------------------------------------------------------- teardown
 
   private disconnect():void {
     this.operation++;this.busy=false;
-    if(this.dirty)try{this.plugin.saveRecovery(this.filename,this.readCells(),this.cells.map(c=>c.code));}catch(error){new Notice(String(error));}
+    if(this.dirty)try{this.plugin.saveRecovery(this.filename,this.readCells(),[...this.baseCodes]);}catch(error){new Notice(String(error));}
     const backend=this.backend;this.backend=null;
     void backend?.close().catch(error=>new Notice(String(error)));
     this.releaseLease();
@@ -563,7 +766,7 @@ export class MarimoView extends EditableFileView {
     this.operation++;this.busy=false;this.connecting=false;this.stopping=false;this.notebookReady=false;
     this.inspection?.abort();this.inspection=null;
     if(this.dirty) {
-      try{this.plugin.saveRecovery(this.filename,this.readCells(),this.cells.map(c=>c.code));}
+      try{this.plugin.saveRecovery(this.filename,this.readCells(),[...this.baseCodes]);}
       catch{new Notice(this.plugin.t('无法保存编辑草稿，请检查本机目录权限。','Could not save recovery draft. Check local directory permissions.'));}
     }
     const backend=this.backend;this.backend=null;
@@ -574,7 +777,7 @@ export class MarimoView extends EditableFileView {
       this.sourceEditor?.destroy();this.sourceEditor=null;
       for(const editor of this.editors.values()) editor.view.destroy();
       this.editors.clear();this.outputs.clear();
-      this.cells=[];this.dirty=false;this.runPhase='none';this.changedSinceRun=false;
+      this.cells=[];this.baseCodes=[];this.dirty=false;this.runPhase='none';this.changedSinceRun=false;
       this.selectedId=null;this.hasDraft=false;
       if(this.restoreButton)this.restoreButton.hidden=true;
       if(this.body)this.body.empty();

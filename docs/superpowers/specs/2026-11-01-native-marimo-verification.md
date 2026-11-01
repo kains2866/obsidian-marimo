@@ -74,6 +74,19 @@ WorkBuddy 对安装源码进行了独立只读调查，提供了路由、通知�
 
 最终本机验证：Node 53 项、Python 32 项测试通过；typecheck/build 通过；`verify-native-opening.py` 全量回归通过；最新 dist 三文件与 Temp 安装目录 sha256 一致。
 
+## 单元格结构编辑（新增 / 插入 / 排序 / 删除）
+
+`assets/verify-cell-editing.py`，一次性 fixture `marimo-cells-<id>.py`，用后入回收站：
+
+- 工具栏「新增单元格」与每个单元格的悬停操作组（下方插入/上移/下移/删除）存在且带 `aria-label`；首行禁用「上移」，末行禁用「下移」。
+- 新增空单元格聚焦编辑器；输入 `10 * 4` 运行后输出 40。在首块下方插入 `x + 100`，输出 102。
+- 将新增块上移一位后，DOM 与模型顺序一致；删除原依赖块后其余单元格的输出（6/102/40）保持不丢——结构操作只改动单个行，不整体重渲染。
+- 保存后文件内单元格顺序与编辑器顺序一致（`x = 2` → `x + 100` → `10 * 4`），被删除的 `x * 3` 不在文件中，`dirty` 复位。
+- 真实鼠标悬停（CDP `Input.dispatchMouseEvent`）后操作组 `opacity:1`、`pointer-events:auto`，截图 `ui4-cell-editing.png`。
+- 未保存的结构编辑（新增块 + 改码）在「停止并断开」后重新连接自动恢复，重建的新块使用全新 id，不与旧会话冲突。
+
+协议实证（marimo 0.25.2）：`/api/kernel/run` 对未注册 id 自动注册；`/api/kernel/delete` 对已注册 id 触发一个响应周期、对未注册 id 静默忽略——适配层只在已注册时调用并等待 `completed-run`，未注册块仅本地删除；保存顺序完全按请求中的 `cellIds`，代码签名由 codegen 从代码推导，新块名字用 `_` 即可。
+
 ## 审查处理与补充实测
 
 使用 receiving-code-review 核对 WorkBuddy 返回的12项问题，未照搬存在技术风险的建议。

@@ -11,6 +11,16 @@ test('rejects malformed backend frames',()=>{
   assert.throws(()=>decodeMessage('{"type":"ready","cells":[{}]}'));
   assert.throws(()=>decodeMessage('{"type":"unknown"}'));
 });
+test('a result frame may carry the id of a cell the adapter just created',()=>{
+  const created=decodeMessage('{"type":"result","id":"7","cellId":"native-abc"}');
+  assert.equal(created.type,'result');
+  if(created.type==='result')assert.equal(created.cellId,'native-abc');
+  // A malformed id must fail loudly instead of becoming an empty cell id.
+  assert.throws(()=>decodeMessage('{"type":"result","id":"7","cellId":42}'));
+  assert.throws(()=>decodeMessage('{"type":"result","id":"7","cellId":""}'));
+  const plain=decodeMessage('{"type":"result","id":"8"}');
+  if(plain.type==='result')assert.equal(plain.cellId,undefined);
+});
 test('only text and explicitly sanitized HTML may be displayed',()=>{
   assert.equal(safeOutput({mimetype:'application/javascript',data:'alert(1)'}).kind,'unsupported');
   assert.equal(safeOutput({mimetype:'text/plain',data:'<script>bad</script>'}).kind,'text');

@@ -91,3 +91,77 @@ class GuardTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(TimeoutError):
                 await self.session.run(self.session.cells)
             close.assert_awaited_once()
+
+    # ---------------------------------------------------- cell structure
+
+    async def test_create_allocates_a_fresh_cell_without_running_anything(self):
+        with patch.object(self.session, '_request', return_value='{}') as request:
+            first = self.session.create('y = 3')
+            second = self.session.create('')
+        # Creating a cell only claims an id: nothing runs until the user asks.
+        request.assert_not_called()
+        self.assertNotEqual(first, second)
+        self.assertNotIn(first, {'a'})
+        self.assertEqual([cell['id'] for cell in self.session.cells], ['a', first, second])
+        self.assertEqual(self.session.cells[1]['code'], 'y = 3')
+        # A brand new cell has no kernel presence until it is run.
+        self.assertNotIn(first, self.session.registered)
+
+    async def test_create_rejects_non_text_code(self):
+        for value in (None, 42, {'code': 'x'}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.session.create(value)
+
+    async def test_delete_of_an_unregistered_cell_never_touches_the_kernel(self):
+        # An id the kernel never saw cannot produce a reactive cycle; asking the
+        # service to delete it and waiting for `completed-run` would hang.
+        cell = self.session.create('y = 3')
+        with patch.object(self.session, '_request', return_value='{}') as request, \
+                patch.object(self.session, '_collect_run', new_callable=AsyncMock) as collect:
+            await self.session.delete(cell)
+        request.assert_not_called()
+        collect.assert_not_awaited()
+        self.assertEqual([item['id'] for item in self.session.cells], ['a'])
+
+    async def test_delete_of_a_registered_cell_calls_the_endpoint_and_waits_for_the_cycle(self):
+        self.session.cells = [
+            {'id': 'a', 'code': 'x=2', 'name': '_', 'config': {}},
+            {'id': 'b', 'code': 'y=3', 'name': '_', 'config': {}},
+        ]
+        self.session.registered = {'a', 'b'}
+        with patch.object(self.session, '_request', return_value='{}') as request, \
+                patch.object(self.session, '_collect_run', new_callable=AsyncMock) as collect:
+            await self.session.delete('a')
+        self.assertEqual(request.call_args.args[0], '/api/kernel/delete')
+        self.assertEqual(request.call_args.args[1], {'cellId': 'a'})
+        collect.assert_awaited_once()
+        self.assertEqual([cell['id'] for cell in self.session.cells], ['b'])
+        self.assertNotIn('a', self.session.registered)
+
+    async def test_delete_of_an_unknown_cell_is_ignored(self):
+        with patch.object(self.session, '_request', return_value='{}') as request:
+            await self.session.delete('not-here')
+        request.assert_not_called()
+
+    async def test_save_keeps_created_cells_in_the_requested_order(self):
+        created = self.session.create('y = 3')
+        with patch.object(self.session, '_request', return_value='rendered\n') as request:
+            await self.session.save([{'id': created, 'code': 'y = 3'}, {'id': 'a', 'code': 'x=2'}])
+        payload = request.call_args.args[1]
+        self.assertEqual(payload['cellIds'], [created, 'a'])
+        # Codegen derives references from the code, so `_` is the correct name.
+        self.assertEqual(payload['names'], ['_', '_'])
+        self.assertEqual(payload['configs'][0], BACKEND.DEFAULT_CONFIG)
+
+    async def test_save_refuses_to_silently_drop_a_cell_that_was_not_deleted(self):
+        self.session.cells = [
+            {'id': 'a', 'code': 'x=2', 'name': '_', 'config': {}},
+            {'id': 'b', 'code': 'y=3', 'name': '_', 'config': {}},
+        ]
+        with patch.object(self.session, '_request', return_value='rendered\n'):
+            with self.assertRaisesRegex(ValueError, 'not deleted'):
+                await self.session.save([{'id': 'a', 'code': 'x=2'}])
+            # The same save is legitimate once the cell was explicitly removed.
+            await self.session.delete('b')
+            await self.session.save([{'id': 'a', 'code': 'x=2'}])
+        self.assertEqual(self.file.read_text(), 'rendered\n')

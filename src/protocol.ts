@@ -2,8 +2,11 @@ export interface Cell {id: string; code: string}
 export type BackendMessage =
   | {type: 'ready'; cells: Cell[]}
   | {type: 'event'; data: Record<string, unknown>}
-  | {type: 'result'; id: string; error?: string}
+  | {type: 'result'; id: string; error?: string; cellId?: string}
   | {type: 'error'; error: string};
+
+/** Data a successful request may return; `create` answers with the new id. */
+export interface RequestResult {cellId?: string}
 
 export function decodeMessage(line: string): BackendMessage {
   const value: unknown = JSON.parse(line);
@@ -12,7 +15,11 @@ export function decodeMessage(line: string): BackendMessage {
   if (frame.type === 'ready' && Array.isArray(frame.cells) && frame.cells.every(cell =>
     cell && typeof cell.id === 'string' && typeof cell.code === 'string')) return frame as unknown as BackendMessage;
   if (frame.type === 'event' && frame.data && typeof frame.data === 'object') return frame as unknown as BackendMessage;
-  if (frame.type === 'result' && typeof frame.id === 'string' && (frame.error === undefined || typeof frame.error === 'string')) return frame as unknown as BackendMessage;
+  if (frame.type === 'result' && typeof frame.id === 'string' && (frame.error === undefined || typeof frame.error === 'string')) {
+    // An empty id would silently address the wrong cell; reject it here.
+    if (frame.cellId !== undefined && (typeof frame.cellId !== 'string' || !frame.cellId)) throw new Error('Invalid backend message');
+    return frame as unknown as BackendMessage;
+  }
   if (frame.type === 'error' && typeof frame.error === 'string') return frame as unknown as BackendMessage;
   throw new Error('Invalid backend message');
 }

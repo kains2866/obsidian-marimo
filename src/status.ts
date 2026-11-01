@@ -100,6 +100,40 @@ export function toolbarAvailability(input: ToolbarInput): ToolbarAvailability {
 }
 
 /**
+ * Structural actions on one cell. They change the shape of the notebook, so
+ * they need the same quiet, live session as a run: a preview, a connecting
+ * kernel or a running cycle must never add or drop cells behind the user.
+ */
+export interface CellActionInput {
+  connection: ConnectionState;
+  run: RunPhase;
+  /** The cell's position in the notebook; `-1` when the notebook is empty. */
+  index: number;
+  count: number;
+  busy?: boolean;
+}
+
+export interface CellActionAvailability {
+  /** Insert a cell (toolbar and per-cell "insert below" share this). */
+  add: boolean;
+  remove: boolean;
+  up: boolean;
+  down: boolean;
+}
+
+export function cellActions(input: CellActionInput): CellActionAvailability {
+  const live = input.connection === 'connected' && input.run !== 'running' && input.busy !== true;
+  if (!live) return {add: false, remove: false, up: false, down: false};
+  return {
+    add: true,
+    // A notebook always keeps at least one cell: an empty app cannot be saved.
+    remove: input.count > 1,
+    up: input.index > 0,
+    down: input.index >= 0 && input.index < input.count - 1,
+  };
+}
+
+/**
  * A request may only publish its result while it still owns the session.
  * Disconnecting, stopping or reconnecting bumps the operation counter, so a
  * late `finally` from the old request cannot overwrite the newer state.

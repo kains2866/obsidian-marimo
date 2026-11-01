@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {environmentLabel, normalizeCellStatus, shouldApplyResult, showPrototypeInfo, statusView, toolbarAvailability, type ViewStatus} from '../src/status.ts';
+import {cellActions, environmentLabel, normalizeCellStatus, shouldApplyResult, showPrototypeInfo, statusView, toolbarAvailability, type ViewStatus} from '../src/status.ts';
 
 const zh=(zhText:string)=>zhText;
 const en=(_zhText:string,enText:string)=>enText;
@@ -98,6 +98,26 @@ test('an interrupted run is stated plainly instead of looking successful',()=>{
   assert.deepEqual(statusView({...base,connection:'connected',run:'interrupted'},zh),{text:'已中断 · 已保存',tone:'muted',busy:false});
   assert.equal(statusView({...base,connection:'connected',run:'interrupted',dirty:true,changedSinceRun:true},zh).text,'已中断 · 代码已修改 · 未保存');
   assert.equal(statusView({...base,connection:'connected',run:'interrupted'},en).text,'Interrupted · Saved');
+});
+
+test('structural cell actions need a live idle session',()=>{
+  const idle={connection:'connected' as const,run:'none' as const,count:3,index:1};
+  assert.deepEqual(cellActions(idle),{add:true,remove:true,up:true,down:true});
+  // Before connecting the notebook is a read-only preview: no structural edits.
+  assert.deepEqual(cellActions({...idle,connection:'disconnected'}),{add:false,remove:false,up:false,down:false});
+  assert.deepEqual(cellActions({...idle,connection:'connecting'}),{add:false,remove:false,up:false,down:false});
+  // A run owns the session; the file must not change shape mid-cycle.
+  assert.deepEqual(cellActions({...idle,run:'running'}),{add:false,remove:false,up:false,down:false});
+  assert.deepEqual(cellActions({...idle,busy:true}),{add:false,remove:false,up:false,down:false});
+});
+test('the first and last cells cannot move past the notebook edges',()=>{
+  assert.deepEqual(cellActions({connection:'connected',run:'finished',count:3,index:0}),{add:true,remove:true,up:false,down:true});
+  assert.deepEqual(cellActions({connection:'connected',run:'finished',count:3,index:2}),{add:true,remove:true,up:true,down:false});
+});
+test('the last remaining cell cannot be deleted',()=>{
+  assert.deepEqual(cellActions({connection:'connected',run:'none',count:1,index:0}),{add:true,remove:false,up:false,down:false});
+  // An empty notebook may still receive a cell.
+  assert.deepEqual(cellActions({connection:'connected',run:'none',count:0,index:-1}),{add:true,remove:false,up:false,down:false});
 });
 
 test('a superseded request must not overwrite the state of a newer session',()=>{

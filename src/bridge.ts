@@ -1,20 +1,24 @@
 import {spawn, type ChildProcessWithoutNullStreams} from 'node:child_process';
 import {createInterface} from 'node:readline';
 import {stopOwnedProcess} from './process-lifecycle';
-import {decodeMessage, type BackendMessage, type Cell} from './protocol';
+import {decodeMessage, type BackendMessage, type Cell, type RequestResult} from './protocol';
 import backendSource from '../python/backend.py';
 
-export type RequestMethod = 'run' | 'save' | 'interrupt' | 'stdin';
+export type RequestMethod = 'run' | 'save' | 'create' | 'delete' | 'interrupt' | 'stdin';
 
 export interface RequestPayload {
   cells?: Cell[];
+  /** Cell to remove. */
+  cellId?: string;
+  /** Initial code for a new cell. */
+  code?: string;
   /** Answer for a pending `input()`. */
   value?: string;
 }
 
 export class Backend {
   private process: ChildProcessWithoutNullStreams | null = null;
-  private pending = new Map<string, {resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout>}>();
+  private pending = new Map<string, {resolve: (result: RequestResult) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout>}>();
   private serial = 0;
   private closed = false;
   private closing: Promise<void>|null = null;
@@ -40,7 +44,7 @@ export class Backend {
           if (frame.type === 'error') fail(new Error(frame.error));
           if (frame.type === 'result') {
             const pending = this.pending.get(frame.id);
-            if (pending) {clearTimeout(pending.timer); this.pending.delete(frame.id); frame.error ? pending.reject(new Error(frame.error)) : pending.resolve();}
+            if (pending) {clearTimeout(pending.timer); this.pending.delete(frame.id); frame.error ? pending.reject(new Error(frame.error)) : pending.resolve({cellId: frame.cellId});}
           }
           this.onMessage(frame);
         } catch (error) {fail(new Error('Invalid marimo adapter response'));this.onMessage({type:'error',error:'Invalid marimo adapter response; reconnect'});void this.close();}
@@ -48,13 +52,15 @@ export class Backend {
     });
   }
 
-  request(method: RequestMethod, payload: RequestPayload = {}): Promise<void> {
+  request(method: RequestMethod, payload: RequestPayload = {}): Promise<RequestResult> {
     if (this.closed || !this.process || this.process.exitCode !== null) return Promise.reject(new Error('Session is not connected'));
     const id = String(++this.serial);
-    // Run/save wait for a whole reactive cycle; interrupt and stdin must answer fast.
-    const long = method === 'run' || method === 'save';
+    // Run/save/delete wait for a whole reactive cycle; the rest must answer fast.
+    const long = method === 'run' || method === 'save' || method === 'delete';
     const frame: Record<string, unknown> = {id, method};
-    if (long) frame.cells = payload.cells ?? [];
+    if (method === 'run' || method === 'save') frame.cells = payload.cells ?? [];
+    else if (method === 'create') frame.code = payload.code ?? '';
+    else if (method === 'delete') frame.cellId = payload.cellId ?? '';
     else if (method === 'stdin') frame.value = payload.value ?? '';
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {this.pending.delete(id); reject(new Error(`${method} timed out; session stopped`)); this.close();}, long ? 120_000 : 15_000);

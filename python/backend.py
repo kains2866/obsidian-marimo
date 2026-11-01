@@ -21,6 +21,9 @@ from websockets.asyncio.client import connect
 
 SUPPORTED_VERSION = "0.25.2"
 
+# marimo's own defaults for a freshly created cell; codegen needs them on save.
+DEFAULT_CONFIG = {"column": None, "disabled": False, "hide_code": False, "expand_output": False}
+
 
 class ServerTokenParser(HTMLParser):
     token = None
@@ -47,6 +50,11 @@ class NativeSession:
         self.server_token = ""
         self._drain_task = None
         self.layout = None
+        # Cell ids the kernel knows about: only those can produce a reactive
+        # cycle, so only those may be deleted through the service.
+        self.registered = set()
+        # Cells removed locally; a save may omit these and nothing else.
+        self.deleted = set()
         self.fingerprint = hashlib.sha256(self.filename.read_bytes()).hexdigest()
         # One reactive cycle at a time: the initial run and user runs share the
         # websocket and must not read frames concurrently.
@@ -124,6 +132,7 @@ class NativeSession:
         if len(ids) != len(codes):
             raise RuntimeError("Invalid marimo notebook state")
         self.cells = [{"id": cell_id, "code": code, "name": ready["names"][i], "config": ready["configs"][i]} for i, (cell_id, code) in enumerate(zip(ids, codes))]
+        self.registered = set(ids)
         self.layout = ready.get("layout")
 
     async def instantiate(self):
@@ -160,8 +169,52 @@ class NativeSession:
         ids = [cell.get("id") for cell in cells]
         if len(ids) != len(set(ids)) or not set(ids) <= known or any(not isinstance(cell.get("code"), str) for cell in cells):
             raise ValueError("Invalid cell update")
-        if all_cells and set(ids) != known:
-            raise ValueError("Saving requires every original cell")
+        if all_cells:
+            # A cell may only vanish from the file after an explicit delete; a
+            # view that merely loses a cell must never truncate the notebook.
+            missing = known - set(ids) - self.deleted
+            if missing:
+                raise ValueError("Saving requires every cell that was not deleted")
+
+    def create(self, code=""):
+        """Claim a local cell id for a new cell.
+
+        No service call: an empty cell has nothing to run, and marimo registers
+        an unseen id by itself the first time that cell is run or saved.
+        """
+        if self.closed:
+            raise RuntimeError("Session stopped; reconnect before adding a cell")
+        if not isinstance(code, str):
+            raise ValueError("A cell requires text code")
+        existing = {cell["id"] for cell in self.cells}
+        cell_id = "native-" + secrets.token_hex(6)
+        while cell_id in existing:
+            cell_id = "native-" + secrets.token_hex(6)
+        self.cells.append({"id": cell_id, "code": code, "name": "_", "config": dict(DEFAULT_CONFIG)})
+        self.deleted.discard(cell_id)
+        return cell_id
+
+    async def delete(self, cell_id):
+        """Drop a cell; a live cell is removed from the kernel as well."""
+        if self.closed:
+            raise RuntimeError("Session stopped; reconnect before deleting a cell")
+        if not isinstance(cell_id, str) or not cell_id:
+            raise ValueError("A cell id is required")
+        if cell_id not in {cell["id"] for cell in self.cells}:
+            return
+        if cell_id in self.registered:
+            try:
+                # Deleting a live cell triggers a reactive cycle: consume it here
+                # so the next run cannot read frames that belong to this one.
+                async with self._cycle_lock:
+                    await asyncio.to_thread(self._request, "/api/kernel/delete", {"cellId": cell_id})
+                    await self._collect_run()
+            except BaseException:
+                await self.close()
+                raise
+            self.registered.discard(cell_id)
+        self.cells = [cell for cell in self.cells if cell["id"] != cell_id]
+        self.deleted.add(cell_id)
 
     async def run(self, cells):
         if self.closed:
@@ -173,7 +226,9 @@ class NativeSession:
                 if self.closed:
                     raise RuntimeError("Session stopped; reconnect before running")
                 await asyncio.to_thread(self._request, "/api/kernel/run", {"cellIds": [cell["id"] for cell in cells], "codes": [cell["code"] for cell in cells]})
-                return await self._collect_run()
+                events = await self._collect_run()
+                self.registered.update(cell["id"] for cell in cells)
+                return events
         except BaseException:
             # A partial cycle cannot safely be reused: never consume its late events as another run.
             await self.close()
@@ -283,11 +338,13 @@ async def serve(filename):
         # Runs happen off the reader loop: `interrupt` and `stdin` must stay
         # answerable while a cell is executing.
         try:
-            method, cells = request["method"], request["cells"]
+            method = request["method"]
             if method == "run":
-                await session.run(cells)
+                await session.run(request["cells"])
+            elif method == "save":
+                await session.save(request["cells"])
             else:
-                await session.save(cells)
+                await session.delete(request.get("cellId"))
             emit({"type": "result", "id": request_id})
         except Exception as error:
             emit({"type": "result", "id": request_id, "error": redact(error)})
@@ -318,10 +375,14 @@ async def serve(filename):
                 request = json.loads(line)
                 request_id = str(request["id"])
                 method = request["method"]
-                if method in ("run", "save"):
+                if method in ("run", "save", "delete"):
                     running = asyncio.create_task(handle_run(request, request_id))
                     pending.add(running)
                     running.add_done_callback(pending.discard)
+                elif method == "create":
+                    # Purely local: the id is handed to the view, which decides
+                    # where the cell sits in the file order.
+                    emit({"type": "result", "id": request_id, "cellId": session.create(request.get("code", ""))})
                 elif method == "interrupt":
                     await session.interrupt()
                     emit({"type": "result", "id": request_id})

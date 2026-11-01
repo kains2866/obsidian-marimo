@@ -67,6 +67,73 @@ class NativeBackendTest(unittest.IsolatedAsyncioTestCase):
         _, definitions = loaded.run()
         self.assertEqual(definitions["result"], 12)
 
+    async def test_created_and_deleted_cells_land_in_the_saved_file(self):
+        await self.session.start()
+        first, second = (cell["id"] for cell in self.session.cells)
+        created = self.session.create("6 * 7")
+        events = await self.session.run([{"id": created, "code": "6 * 7"}])
+        # A created id is unknown to the service until it runs; marimo registers it.
+        self.assertEqual(self.output_text(events, created), "42")
+        self.assertIn(created, self.session.registered)
+        # Deleting a registered cell needs a real reactive cycle, not just a local drop.
+        await self.session.delete(second)
+        never_ran = self.session.create("forgotten = 1")
+        await self.session.delete(never_ran)
+        await self.session.save([{"id": created, "code": "6 * 7"}, {"id": first, "code": "x = 2"}])
+        saved = self.path.read_text()
+        # Order comes from the request, not from the original file.
+        self.assertLess(saved.index("6 * 7"), saved.index("x = 2"))
+        self.assertNotIn("forgotten", saved)
+        self.assertNotIn("result = x * 3", saved)
+        import runpy
+        loaded = runpy.run_path(str(self.path))["app"]
+        _, definitions = loaded.run()
+        self.assertEqual(definitions["x"], 2)
+
+    async def test_stdio_exposes_cell_creation_and_deletion(self):
+        """The adapter protocol must expose create/delete, not just run/save."""
+        import asyncio
+        import json
+        import sys
+        process = await asyncio.create_subprocess_exec(sys.executable, str(ROOT/'python/backend.py'), '--notebook', str(self.path), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+
+        async def send(payload):
+            process.stdin.write((json.dumps(payload) + '\n').encode())
+            await process.stdin.drain()
+
+        async def result(request_id):
+            while True:
+                frame = json.loads(await asyncio.wait_for(process.stdout.readline(), 20))
+                if frame.get('type') == 'result' and frame.get('id') == request_id:
+                    return frame
+
+        try:
+            ready = json.loads(await asyncio.wait_for(process.stdout.readline(), 15))
+            self.assertEqual(ready['type'], 'ready')
+            while True:
+                frame = json.loads(await asyncio.wait_for(process.stdout.readline(), 15))
+                if frame.get('data', {}).get('op') == 'completed-run':
+                    break
+            await send({'id': '10', 'method': 'create', 'code': '7 * 5'})
+            created = (await result('10')).get('cellId')
+            self.assertTrue(created)
+            await send({'id': '11', 'method': 'run', 'cells': [{'id': created, 'code': '7 * 5'}]})
+            self.assertNotIn('error', await result('11'))
+            await send({'id': '12', 'method': 'delete', 'cellId': created})
+            self.assertNotIn('error', await result('12'))
+            # The deleted id is gone for good: a later save may not carry it.
+            await send({'id': '13', 'method': 'save', 'cells': [{'id': ready['cells'][0]['id'], 'code': ready['cells'][0]['code']}, {'id': ready['cells'][1]['id'], 'code': ready['cells'][1]['code']}]})
+            self.assertNotIn('error', await result('13'))
+            self.assertNotIn('7 * 5', self.path.read_text())
+        finally:
+            if process.returncode is None:
+                try:
+                    process.stdin.close()
+                    await asyncio.wait_for(process.wait(), 15)
+                except (asyncio.TimeoutError, ProcessLookupError):
+                    process.kill()
+                    await process.wait()
+
     async def test_kernel_error_is_returned_and_service_closes(self):
         await self.session.start()
         result = await self.session.run([{**self.session.cells[0], "code": "raise ValueError('native-probe-error')"}])

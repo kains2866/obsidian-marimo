@@ -77,6 +77,7 @@ export class MarimoView extends EditableFileView {
   private keyScope: Scope|null = null;
   /** The open per-cell popover, if any, and its outside-click handler. */
   private cellMenu: HTMLElement|null = null;
+  private menuAnchor: HTMLElement|null = null;
   private menuDismiss: ((event:Event)=>void)|null = null;
   /** Rendered markdown preview per markdown cell; the code stays folded. */
   private markdownPreviews = new Map<string, HTMLElement>();
@@ -563,11 +564,15 @@ export class MarimoView extends EditableFileView {
     const consoleEl=target.querySelector<HTMLElement>('.marimo-native-console')!;
     if(data.output) {
       if((data.output as Record<string,unknown>).channel==='marimo-error')this.runPhase='failed';
-      // A markdown cell paints itself locally with Obsidian's renderer; the
-      // kernel's pre-rendered copy would only duplicate it. Console output and
-      // errors always pass through.
+      // A static markdown cell paints itself locally with Obsidian's renderer;
+      // the kernel's pre-rendered copy would only duplicate it. A dynamic one
+      // (f-string with `{slots}`) cannot be rendered locally at all — its
+      // kernel output is the only truthful view. Console output and errors
+      // always pass through.
       const row=target.closest('.marimo-native-cell');
-      const suppress=!!row?.classList.contains('is-markdown') && (data.output as Record<string,unknown>).mimetype==='text/markdown';
+      const suppress=!!row?.classList.contains('is-markdown')
+        && (data.output as Record<string,unknown>).mimetype==='text/markdown'
+        && !this.markdownFStrings.has(String(data.cell_id));
       display.empty();
       if(!suppress)this.renderOutput(display, data.output);
     }
@@ -714,7 +719,10 @@ export class MarimoView extends EditableFileView {
     if(markdown) {
       this.markdownPreviews.set(cell.id,preview);
       preview.addEventListener('click',()=>{this.openMarkdownSource(cell.id);});
-      void this.renderMarkdownPreview(cell.id,markdown.markdown);
+      // A dynamic markdown cell renders through the kernel: its `{slots}`
+      // need live variable values no local renderer has.
+      if(markdown.prefix==='f')this.clearMarkdownPreview(cell.id);
+      else void this.renderMarkdownPreview(cell.id,markdown.markdown);
     }
     const output=content.createDiv({cls:'marimo-native-output markdown-rendered'});
     output.createDiv({cls:'marimo-native-display'});
@@ -897,12 +905,14 @@ export class MarimoView extends EditableFileView {
     if(!row||!editor)return;
     const doc=editor.view.state.doc.toString();
     if(this.markdownMode.has(cellId)) {
-      // The document is the markdown text itself; nothing to parse. The
-      // preview follows every edit, also while the editor is open — that is
-      // the live side-by-side view.
+      // The document is the markdown text itself; nothing to parse. A static
+      // cell repaints its local preview on every edit — also while the editor
+      // is open, that is the live side-by-side view. A dynamic cell leaves
+      // the stage to the kernel output below instead.
       const preview=row.querySelector<HTMLElement>('.marimo-native-markdown');
       if(preview)this.markdownPreviews.set(cellId,preview);
-      void this.renderMarkdownPreview(cellId,doc);
+      if(this.markdownFStrings.has(cellId))this.clearMarkdownPreview(cellId);
+      else void this.renderMarkdownPreview(cellId,doc);
       this.scheduleOutlineRefresh();
       return;
     }
@@ -935,9 +945,18 @@ export class MarimoView extends EditableFileView {
     if(!row.hasClass('is-source-open'))void this.renderMarkdownPreview(cellId,parsed.markdown);
   }
 
+  /**
+   * A dynamic (f-string) markdown cell cannot be rendered locally: the
+   * kernel's output is the only truthful view, so the local preview steps
+   * aside. Bumping the sequence also cancels any in-flight local render.
+   */
+  private clearMarkdownPreview(cellId:string): void {
+    this.markdownSeqs.set(cellId,(this.markdownSeqs.get(cellId)??0)+1);
+    this.markdownPreviews.get(cellId)?.empty();
+  }
+
   /** Paint the cell's markdown with Obsidian's own renderer. */
-  private async renderMarkdownPreview(cellId:string, text:string): Promise<void> {
-    const target=this.markdownPreviews.get(cellId);
+  private async renderMarkdownPreview(cellId:string, text:string): Promise<void> {    const target=this.markdownPreviews.get(cellId);
     if(!target)return;
     const seq=(this.markdownSeqs.get(cellId)??0)+1;
     this.markdownSeqs.set(cellId,seq);
@@ -967,7 +986,7 @@ export class MarimoView extends EditableFileView {
     const cell=this.cells.find(item=>item.id===cellId);
     if(!row||!cell)return;
     const config=readCellConfig(cell.config);
-    const menu=row.createDiv({cls:'marimo-native-cell-menu'});
+    const menu=this.openFloatingMenu(button);
     menu.dataset.cellId=cellId;
     menu.setAttribute('role','menu');
     menu.setAttribute('aria-label',this.plugin.t('单元格设置','Cell settings'));
@@ -992,6 +1011,9 @@ export class MarimoView extends EditableFileView {
       item('toggle-f-string','braces',fstring?this.plugin.t('转为普通字符串','Use plain string'):this.plugin.t('转为 f-string','Use f-string'),()=>{
         if(fstring)this.markdownFStrings.delete(cellId);
         else this.markdownFStrings.add(cellId);
+        // The preview source flips with the flag: a dynamic cell shows the
+        // kernel output, a static one goes back to the local renderer.
+        this.refreshMarkdownNow(cellId);
         // The stored code changes even though the visible text does not.
         this.markCellStale(cellId);
         this.dirty=true;
@@ -1013,20 +1035,80 @@ export class MarimoView extends EditableFileView {
     item('cell-top','arrow-up-to-line',this.plugin.t('移到最前','Send to top'),()=>this.moveCellEdge(cellId,'top'),this.kbdLabel('Mod+Shift+1'));
     item('cell-bottom','arrow-down-to-line',this.plugin.t('移到最后','Send to bottom'),()=>this.moveCellEdge(cellId,'bottom'),this.kbdLabel('Mod+Shift+2'));
     this.cellMenu=menu;
+    this.placeFloatingMenu(menu);
     // A later interaction elsewhere closes it; this click is already finished.
     this.menuDismiss=(event:Event)=>{if(!menu.contains(event.target as Node))this.closeCellMenu();};
     document.addEventListener('pointerdown',this.menuDismiss,{capture:true});
     document.addEventListener('keydown',this.menuKey,{capture:true});
+    // Scrolling the notebook would leave the floating menu behind its anchor.
+    document.addEventListener('scroll',this.menuDismiss,{capture:true});
     // The button stays the visual anchor even when the row is scrolled.
     button.setAttribute('aria-expanded','true');
   }
 
+  /**
+   * A floating menu anchored to a button. It lives on the view root with
+   * fixed positioning: cells and scroll containers clip `absolute` popovers,
+   * which boxed the insert menu inside the cell frame.
+   */
+  private openFloatingMenu(anchor:HTMLElement): HTMLElement {
+    const menu=this.contentEl.createDiv({cls:'marimo-native-cell-menu'});
+    menu.dataset.anchor='1';
+    this.menuAnchor=anchor;
+    menu.style.position='fixed';
+    menu.style.right='auto';
+    return menu;
+  }
+
+  /**
+   * Right-align the open menu with its anchor and keep it inside the view
+   * area — the window edge alone would let it slide under the host's right
+   * sidebar. Called after the items are built, synchronously: a deferred
+   * frame can be throttled in an unfocused window and leave the menu
+   * invisible.
+   *
+   * The host may scale coordinates (interface zoom, transformed ancestors
+   * bend `fixed` positioning), so after placing, the real rect is measured
+   * and the delta corrected — twice is enough to converge.
+   */
+  private placeFloatingMenu(menu:HTMLElement): void {
+    const anchor=this.menuAnchor;
+    if(!anchor||!anchor.isConnected)return;
+    const rect=anchor.getBoundingClientRect();
+    const bounds=this.contentEl.getBoundingClientRect();
+    const width=menu.offsetWidth;
+    const height=menu.offsetHeight;
+    let desiredTop=rect.bottom+4;
+    if(desiredTop+height>window.innerHeight-8)desiredTop=Math.max(8,rect.top-height-4);
+    let desiredLeft=rect.right-width;
+    if(desiredLeft<bounds.left+8)desiredLeft=bounds.left+8;
+    if(desiredLeft+width>bounds.right-8)desiredLeft=bounds.right-8-width;
+    menu.style.top=`${desiredTop}px`;
+    menu.style.left=`${desiredLeft}px`;
+    for(let i=0;i<3;i+=1){
+      const placed=menu.getBoundingClientRect();
+      let dx=desiredLeft-placed.x;
+      const dy=desiredTop-placed.y;
+      // The rendered box can be wider than `offsetWidth` under host zoom.
+      const overflow=placed.right-(bounds.right-8);
+      if(overflow>0)dx-=overflow;
+      if(Math.abs(dx)<1&&Math.abs(dy)<1)break;
+      menu.style.left=`${parseFloat(menu.style.left)+dx}px`;
+      menu.style.top=`${parseFloat(menu.style.top)+dy}px`;
+    }
+  }
+
   private closeCellMenu(): void {
-    if(this.menuDismiss){document.removeEventListener('pointerdown',this.menuDismiss,{capture:true});this.menuDismiss=null;}
+    if(this.menuDismiss){
+      document.removeEventListener('pointerdown',this.menuDismiss,{capture:true});
+      document.removeEventListener('scroll',this.menuDismiss,{capture:true});
+      this.menuDismiss=null;
+    }
     document.removeEventListener('keydown',this.menuKey,{capture:true});
-    this.cellMenu?.parentElement?.querySelectorAll<HTMLElement>('[data-action="cell-config"]').forEach(button=>button.setAttribute('aria-expanded','false'));
+    this.contentEl.querySelectorAll<HTMLElement>('[data-action="cell-config"][aria-expanded="true"]').forEach(button=>button.setAttribute('aria-expanded','false'));
     this.cellMenu?.remove();
     this.cellMenu=null;
+    this.menuAnchor=null;
   }
 
   private menuKey=(event:KeyboardEvent):void => {
@@ -1117,7 +1199,7 @@ export class MarimoView extends EditableFileView {
   private toggleInsertMenu(button:HTMLElement, afterId:string|null): void {
     if(this.cellMenu?.dataset.insertFor){this.closeCellMenu();return;}
     this.closeCellMenu();
-    const menu=button.parentElement!.createDiv({cls:'marimo-native-cell-menu'});
+    const menu=this.openFloatingMenu(button);
     menu.dataset.insertFor='1';
     menu.setAttribute('role','menu');
     menu.setAttribute('aria-label',this.plugin.t('插入单元格','Insert cell'));
@@ -1133,9 +1215,11 @@ export class MarimoView extends EditableFileView {
     item('file-text',this.plugin.t('Markdown 单元格','Markdown cell'),'markdown');
     item('database',this.plugin.t('SQL 单元格','SQL cell'),'sql');
     this.cellMenu=menu;
+    this.placeFloatingMenu(menu);
     this.menuDismiss=(event:Event)=>{if(!menu.contains(event.target as Node))this.closeCellMenu();};
     document.addEventListener('pointerdown',this.menuDismiss,{capture:true});
     document.addEventListener('keydown',this.menuKey,{capture:true});
+    document.addEventListener('scroll',this.menuDismiss,{capture:true});
   }
 
   /** Rebuild the outline rail from the current markdown cells. */

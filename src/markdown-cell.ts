@@ -3,16 +3,22 @@
  *
  * A cell whose code is a single `mo.md(<string literal>)` expression is prose,
  * not code: the view renders its text with Obsidian's own markdown engine and
- * keeps the Python wrapper out of sight. The parser is deliberately narrow —
- * anything it does not fully understand (interpolation, multiple statements,
- * unknown escapes it cannot decode) returns `null` and the cell stays a normal
- * editable cell driven by the kernel output.
+ * keeps the Python wrapper out of sight. F-strings with interpolation slots
+ * are markdown too — a dynamic one (`mo.md(f"... {result} ...")`) edits as
+ * bare markdown with the `{slot}` left visible, while the kernel output does
+ * the actual interpolation. Anything the parser still cannot understand
+ * (multiple statements, unknown escapes it cannot decode) returns `null` and
+ * the cell stays a normal editable cell driven by the kernel output.
  */
 
 export interface MarkdownCellSource {
   /** The decoded markdown text, dedented for rendering. */
   markdown: string;
-  /** String prefix on the literal: `''` for a plain string, `'f'` for f-strings. */
+  /**
+   * String prefix on the literal: `''` for a plain string, `'f'` only when
+   * the text actually contains interpolation slots — a slot-free f-string is
+   * indistinguishable from a plain one and encodes without the prefix.
+   */
   prefix: '' | 'f';
 }
 
@@ -22,9 +28,10 @@ export interface MarkdownCellSource {
  * The view edits markdown cells as bare markdown (the way the marimo editor
  * does); this is the write-back half of that round trip. The literal is laid
  * out inline — the text starts right after the opening quotes — so parsing it
- * again takes the verbatim branch and returns exactly the input text. An
- * f-string prefix round-trips too: braces are doubled so Python interpolates
- * what the kernel expects and keeps literal braces literal.
+ * again takes the verbatim branch and returns exactly the input text. With an
+ * f-string prefix, identifier-looking `{slots}` stay single so the kernel
+ * keeps interpolating them, and every other brace doubles so it survives the
+ * f-string decode as a literal.
  */
 export function encodeMarkdownCell(markdown: string, prefix: '' | 'f' = ''): string {
   if (markdown === '') return prefix ? `mo.md(${prefix}"")` : 'mo.md("")';
@@ -41,9 +48,11 @@ export function encodeMarkdownCell(markdown: string, prefix: '' | 'f' = ''): str
     // Any quote directly before the closing terminator shifts its position.
     .replace(/"+$/, run => '\\"'.repeat(run.length));
   if (prefix === 'f') {
-    // Python f-strings decode `{{` to `{`; doubling keeps the decoded text
-    // identical whether the kernel interpolates the braces or not.
-    body = body.replace(/\{/g, '{{').replace(/\}/g, '}}');
+    // An interpolation slot keeps its single braces; anything else doubles.
+    // The slot shape mirrors what the decoder copies through verbatim, which
+    // is what makes `parse(encode(x, 'f')) === x` hold for every text. A slot
+    // match is always three or more characters; a bare brace is one.
+    body = body.replace(/(\{[A-Za-z_][^{}]*\})|[{}]/g, match => match.length === 1 ? match + match : match);
   }
   return `mo.md(${prefix}"""${body}""")`;
 }
@@ -67,6 +76,8 @@ interface Literal {
   end: number;
   /** True for `f` strings, whose braces may interpolate. */
   interpolated: boolean;
+  /** True once an interpolation slot was copied through. */
+  slots: boolean;
   /** Normalized prefix characters in source order (`'f'`, `'r'`, `'rf'`, …). */
   prefix: string;
   /** True when the source text starts with a newline: the block-string style. */
@@ -78,6 +89,7 @@ function readLiteral(code: string, start: number): Literal | null {
   let index = start;
   let raw = false;
   let interpolated = false;
+  let slots = false;
   let prefix = '';
   // String prefix: combinations of r/f in either order or case.
   while (index < code.length) {
@@ -100,16 +112,23 @@ function readLiteral(code: string, start: number): Literal | null {
     if (code.startsWith(terminator, from)) {
       // A single-quoted literal cannot span lines (source newlines were
       // rejected below); a decoded `\n` escape is perfectly legal.
-      return {text, end: from + terminator.length, interpolated, prefix, block};
+      return {text, end: from + terminator.length, interpolated, slots, prefix, block};
     }
     const char = code[from]!;
     if (char === '\n' && !triple) return null;
     if (interpolated) {
-      // Doubled braces are literal braces; a single one starts an
-      // interpolation expression this static reader must not evaluate.
+      // Doubled braces are literal braces. A single `{` opens an interpolation
+      // slot: copied through verbatim (the editor shows it, the kernel
+      // evaluates it), which is exactly what the encoder writes back. A
+      // single `}` cannot start any Python f-string, so it stays rejected.
       if (char === '{') {
         if (code[from + 1] === '{') {text += '{'; from += 2; continue;}
-        return null;
+        const close = code.indexOf('}', from + 1);
+        if (close === -1) return null;
+        text += code.slice(from, close + 1);
+        slots = true;
+        from = close + 1;
+        continue;
       }
       if (char === '}') {
         if (code[from + 1] === '}') {text += '}'; from += 2; continue;}
@@ -180,12 +199,13 @@ export function parseMarkdownCell(code: string): MarkdownCellSource | null {
   const rest = call.slice(index).trim();
   if (rest && !rest.startsWith('#')) return null;
   // A literal laid out inline keeps every character, including any indent —
-  // that is the exactness contract with `encodeMarkdownCell`. Only the f
-  // prefix participates in the round trip; the encoder never writes raw
-  // strings, so r-prefixed literals keep their pre-existing lossy edit path.
+  // that is the exactness contract with `encodeMarkdownCell`. Only an f
+  // prefix with real interpolation slots stays dynamic; a slot-free f-string
+  // is indistinguishable in output from a plain one, and encoding it as a
+  // plain string keeps literal braces literal.
   return {
     markdown: literal.block ? dedent(literal.text) : literal.text,
-    prefix: literal.interpolated ? 'f' : '',
+    prefix: literal.interpolated && literal.slots ? 'f' : '',
   };
 }
 

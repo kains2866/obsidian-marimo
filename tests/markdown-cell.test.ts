@@ -30,11 +30,25 @@ test('a raw string keeps backslashes and rejects a trailing one', () => {
   assert.equal(parseMarkdownCell('mo.md(r"ends\\")'), null);
 });
 
-test('an f-string without interpolation is markdown; with interpolation it is not', () => {
-  assert.deepEqual(parseMarkdownCell('mo.md(f"plain")'), {markdown: 'plain', prefix: 'f'});
+test('a slot-free f-string normalizes to a plain string', () => {
+  // Without interpolation slots an f-string renders exactly like a plain
+  // string, so the view encodes it as one and keeps literal braces literal.
+  assert.deepEqual(parseMarkdownCell('mo.md(f"plain")'), {markdown: 'plain', prefix: ''});
   // A doubled brace is a literal brace, not an interpolation slot.
-  assert.deepEqual(parseMarkdownCell('mo.md(f"brace{{literal}}")'), {markdown: 'brace{literal}', prefix: 'f'});
-  assert.equal(parseMarkdownCell('mo.md(f"doubled={x}")'), null);
+  assert.deepEqual(parseMarkdownCell('mo.md(f"brace{{literal}}")'), {markdown: 'brace{literal}', prefix: ''});
+  assert.deepEqual(parseMarkdownCell('mo.md(f"""# Hi""")'), {markdown: '# Hi', prefix: ''});
+  assert.deepEqual(parseMarkdownCell('mo.md(F"plain")'), {markdown: 'plain', prefix: ''});
+});
+
+test('an interpolated f-string is dynamic markdown with the f prefix', () => {
+  // The slot survives decoding verbatim: the editor shows `{result}` and the
+  // kernel evaluates it.
+  assert.deepEqual(parseMarkdownCell('mo.md(f"doubled={x}")'), {markdown: 'doubled={x}', prefix: 'f'});
+  assert.deepEqual(parseMarkdownCell('mo.md(f"## {a} and {obj.attr}")'), {markdown: '## {a} and {obj.attr}', prefix: 'f'});
+  // An unterminated slot is not representable.
+  assert.equal(parseMarkdownCell('mo.md(f"broken {x")'), null);
+  // A single `}` cannot occur in a Python f-string.
+  assert.equal(parseMarkdownCell('mo.md(f"stray } brace")'), null);
 });
 
 test('a leading comment line is allowed', () => {
@@ -110,12 +124,35 @@ test('empty markdown encodes to a plain empty literal', () => {
 
 // ----------------------------------------------------------------- f-string
 
-test('f-string encoding doubles braces and round-trips the prefix', () => {
+test('f-string encoding keeps slots single and doubles literal braces', () => {
   const code = encodeMarkdownCell('value {x} stays', 'f');
   assert.match(code, /^mo\.md\(f"""/);
-  assert.match(code, /\{\{x\}\}/);
+  // The interpolation slot must survive: the kernel keeps evaluating it.
+  assert.match(code, /value \{x\} stays/);
   const parsed = parseMarkdownCell(code);
   assert.deepEqual(parsed, {markdown: 'value {x} stays', prefix: 'f'});
+});
+
+test('f-string round trip holds for mixed slot and literal braces', () => {
+  // Text always round-trips exactly; the reported prefix reflects whether
+  // the decoded text still carries an interpolation slot.
+  const dynamic: Array<[string, string]> = [
+    ['{result} and { literal', 'f'],
+    ['{{a}}', 'f'],
+    ['{a} }{b}', 'f'],
+    ['{a}{', 'f'],
+    ['{a}}', 'f'],
+    ['}{a}{', 'f'],
+    ['{a{b}', 'f'],
+    ['{x:{w}}', 'f'],
+    ['{}', ''],
+    ['{0}', ''],
+    ['no braces', ''],
+  ];
+  for (const [text, prefix] of dynamic) {
+    const parsed = parseMarkdownCell(encodeMarkdownCell(text, 'f'));
+    assert.deepEqual(parsed, {markdown: text, prefix}, text);
+  }
 });
 
 test('plain encoding keeps braces literal and reports no prefix', () => {
@@ -123,9 +160,8 @@ test('plain encoding keeps braces literal and reports no prefix', () => {
   assert.deepEqual(parsed, {markdown: 'a {b} c', prefix: ''});
 });
 
-test('an existing f-string literal reports the f prefix', () => {
-  assert.deepEqual(parseMarkdownCell('mo.md(f"""# Hi""")'), {markdown: '# Hi', prefix: 'f'});
-  assert.deepEqual(parseMarkdownCell('mo.md(F"plain")'), {markdown: 'plain', prefix: 'f'});
+test('a stored f-string without slots reports no prefix', () => {
+  assert.deepEqual(parseMarkdownCell('mo.md(f"""# Hi""")'), {markdown: '# Hi', prefix: ''});
 });
 
 // ------------------------------------------------------------------ outline

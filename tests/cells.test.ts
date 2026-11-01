@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {insertCell, moveCell, nextCellId, removeCell} from '../src/cells.ts';
+import {insertCell, moveCell, nextCellId, removeCell, splitCellCode} from '../src/cells.ts';
 import type {Cell} from '../src/protocol.ts';
 
 const cells: Cell[] = [
@@ -44,4 +44,19 @@ test('focusing the next cell stops at the end instead of wrapping', () => {
   assert.equal(nextCellId(cells, 'b'), 'c');
   assert.equal(nextCellId(cells, 'c'), null);
   assert.equal(nextCellId(cells, 'missing'), null);
+});
+
+test('splitting at the caret divides the code into two runnable halves', () => {
+  assert.deepEqual(splitCellCode('a = 1\nb = 2', 5), {before: 'a = 1', after: 'b = 2'});
+  // A caret at line start sends the whole line to the lower half.
+  assert.deepEqual(splitCellCode('a = 1\nb = 2', 6), {before: 'a = 1', after: 'b = 2'});
+  // Trailing/leading blank lines around the split collapse away.
+  assert.deepEqual(splitCellCode('a = 1\n\n\nb = 2', 7), {before: 'a = 1', after: 'b = 2'});
+});
+
+test('splitting at the edges keeps one side empty instead of losing code', () => {
+  assert.deepEqual(splitCellCode('a = 1', 0), {before: '', after: 'a = 1'});
+  assert.deepEqual(splitCellCode('a = 1', 5), {before: 'a = 1', after: ''});
+  assert.deepEqual(splitCellCode('a = 1', 99), {before: 'a = 1', after: ''});
+  assert.deepEqual(splitCellCode('a = 1', -3), {before: '', after: 'a = 1'});
 });

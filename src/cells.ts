@@ -41,3 +41,16 @@ export function nextCellId(cells: Cell[], id: string): string | null {
   if (index < 0 || index >= cells.length - 1) return null;
   return cells[index + 1].id;
 }
+
+/**
+ * Divide the code at a caret offset into the upper and lower halves of a
+ * split. Blank lines at the cut collapse so neither half ends (or begins) with
+ * dead lines; the caret itself never loses characters.
+ */
+export function splitCellCode(code: string, offset: number): {before: string; after: string} {
+  const at = Math.min(Math.max(Math.trunc(offset), 0), code.length);
+  return {
+    before: code.slice(0, at).replace(/\n+$/, ''),
+    after: code.slice(at).replace(/^\n+/, ''),
+  };
+}

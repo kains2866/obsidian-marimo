@@ -241,6 +241,18 @@
   cursor: pointer;
 }
 .marimo-native-cell-menu-item:hover { background: var(--background-modifier-hover); }
+.marimo-native-cell-menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--background-modifier-border);
+}
+.marimo-native-kbd {
+  margin-left: auto;
+  padding-left: 16px;
+  color: var(--text-faint);
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+}
 .marimo-native-cell-menu-item svg { width: 15px; height: 15px; flex-shrink: 0; color: var(--text-muted); }
 .marimo-native-cell-menu-item span { pointer-events: none; }
 

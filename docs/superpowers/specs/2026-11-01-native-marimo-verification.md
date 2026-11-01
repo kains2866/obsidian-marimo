@@ -176,3 +176,12 @@ WorkBuddy 对安装源码进行了独立只读调查，提供了路由、通知�
 - 恢复入口改进：只读预览（未连接）即读取草稿并显示「恢复草稿」按钮，点击无会话时提示"连接后可恢复"，不再静默无反应；`status.ts` 的 restore 可用性同步调整。
 - 残留清理：草稿目录堆积 13 个历史草稿（fixture 已删但草稿被上述 bug 复活），备份至 `/tmp/marimo-drafts-backup-20261101` 后清空。
 - 宿主回归（`assets/verify-draft-fix.py`）：结构编辑→停止→重开无报错、恢复按钮出现、点击后 3 个单元格与代码 `extra = 1` 恢复正确、trash 后草稿不复活。Node 102 项通过；typecheck/build 通过。
+
+## 单元格菜单对齐原生（P2）
+
+对照 marimo 原生 `...` 菜单补齐：**拆分单元格**（光标处一分为二，`splitCellCode` 纯函数保证两侧不丢字符、切口空行收敛，下半进入新建单元格并注册内核）、**单元格内格式化**（`format` 请求按单格 codes 发送）、**清除输出**（本地清空 display/console，代码与状态保留）、**移到最前/最后**（本地排序 + DOM 移动，保存时决定文件顺序）、菜单分组分隔线与快捷键提示（macOS ⌘⇧N 格式，`Platform.isMacOS` 区分）。
+
+- 快捷键：Mod+Shift+9/0（上移/下移）、Mod+Shift+1/2（最前/最后）注册在 CodeMirror 键位；宿主实测 CDP 派发 Meta+Shift+1 后末格移至最前。
+- 菜单验证（`assets/verify-cell-menu.py`）：10 个菜单项齐全、分隔线≥2、kbd 提示 ⌘⇧1/⌘⇧2、清输出后 display/console 为空、光标拆分 `a = 1`/`b = 2`、菜单移到最前/最后后 DOM 与模型一致。截图 `ui8-menu-light.png`、`ui8-menu-dark.png`；证据 `cell-menu-verification.json`。
+- 未做（记录差异）：Convert to Markdown/SQL（自动渲染已覆盖 md 编辑体验；SQL 依赖 duckdb 内核，另行评估）、Name 重命名（需代码生成器支持，另行评估）、Copy link to cell（Web 专属，不适用）。
+- 测试：`tests/cells.test.ts` 增 splitCellCode 8 断言。Node 102 项、Python 61 项通过；typecheck/build 通过。

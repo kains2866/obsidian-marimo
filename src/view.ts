@@ -1,4 +1,4 @@
-import {EditableFileView, MarkdownRenderer, Notice, Scope, sanitizeHTMLToDom, setIcon, type WorkspaceLeaf, type TFile, type ViewStateResult} from 'obsidian';
+import {EditableFileView, MarkdownRenderer, Notice, Platform, Scope, sanitizeHTMLToDom, setIcon, type WorkspaceLeaf, type TFile, type ViewStateResult} from 'obsidian';
 import {EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter} from '@codemirror/view';
 import {Compartment, EditorState} from '@codemirror/state';
 import {python} from '@codemirror/lang-python';
@@ -6,7 +6,7 @@ import {defaultKeymap, history, historyKeymap} from '@codemirror/commands';
 import {autocompletion, type CompletionContext, type CompletionResult} from '@codemirror/autocomplete';
 import {syntaxHighlighting} from '@codemirror/language';
 import {Backend} from './bridge';
-import {insertCell, moveCell, nextCellId, removeCell} from './cells';
+import {insertCell, moveCell, nextCellId, removeCell, splitCellCode} from './cells';
 import {cellPresentation, mergeCellConfig, readCellConfig, wireConfig, type CellConfig} from './cell-config';
 import {nativeHighlight} from './editor-theme';
 import {isErrorOutput, isStdinOutput, safeOutput, type BackendMessage, type Cell} from './protocol';
@@ -589,6 +589,12 @@ export class MarimoView extends EditableFileView {
       keymap.of([
         {key:'Mod-Enter', run:()=>{void this.runCell(cell.id);return true;}},
         {key:'Shift-Enter', run:()=>{void this.runCellAndAdvance(cell.id);return true;}},
+        // The reorder shortcuts mirror the marimo menu; unused combinations in
+        // Obsidian's default map are free, taken ones simply keep working.
+        {key:'Mod-Shift-9', run:()=>{this.shiftCell(cell.id,-1);return true;}},
+        {key:'Mod-Shift-0', run:()=>{this.shiftCell(cell.id,1);return true;}},
+        {key:'Mod-Shift-1', run:()=>{this.moveCellEdge(cell.id,'top');return true;}},
+        {key:'Mod-Shift-2', run:()=>{this.moveCellEdge(cell.id,'bottom');return true;}},
       ]),
       autocompletion({override:[context=>this.completeAt(cell.id,context)],activateOnTyping:true}),
       keymap.of([...defaultKeymap,...historyKeymap]),syntaxHighlighting(nativeHighlight),EditorView.lineWrapping,EditorView.updateListener.of(update=>{
@@ -730,18 +736,30 @@ export class MarimoView extends EditableFileView {
     menu.dataset.cellId=cellId;
     menu.setAttribute('role','menu');
     menu.setAttribute('aria-label',this.plugin.t('单元格设置','Cell settings'));
-    const item=(action:string, icon:string, label:string, onClick:()=>void) => {
+    // Groups read top-down like the marimo menu: edit, then display, then move.
+    const item=(action:string, icon:string, label:string, onClick:()=>void, kbd?:string) => {
       const entry=menu.createEl('button',{cls:'marimo-native-cell-menu-item'});
       entry.dataset.menuAction=action;
       entry.setAttribute('role','menuitem');
       setIcon(entry,icon);
       entry.createSpan({text:label});
+      if(kbd)entry.createSpan({cls:'marimo-native-kbd',text:kbd});
       entry.onclick=event=>{event.stopPropagation();this.closeCellMenu();onClick();};
       return entry;
     };
+    const separator=()=>menu.createDiv({cls:'marimo-native-cell-menu-separator'}).setAttribute('role','separator');
+    item('cell-split','split',this.plugin.t('拆分单元格','Split cell'),()=>void this.splitCellAt(cellId));
+    item('cell-format','sparkles',this.plugin.t('格式化此单元格','Format cell'),()=>void this.formatCells(cellId));
+    item('cell-clear','eraser',this.plugin.t('清除输出','Clear output'),()=>this.clearCellOutput(cellId));
+    separator();
     item('hide-code',config.hideCode?'eye':'eye-off',config.hideCode?this.plugin.t('显示代码','Show code'):this.plugin.t('隐藏代码','Hide code'),()=>void this.setCellConfig(cellId,{hideCode:!config.hideCode}));
     item('toggle-disabled','power',config.disabled?this.plugin.t('启用此单元格','Enable this cell'):this.plugin.t('禁用此单元格','Disable this cell'),()=>void this.setCellConfig(cellId,{disabled:!config.disabled}));
     item('toggle-expand',config.expandOutput?'minimize-2':'maximize-2',config.expandOutput?this.plugin.t('折叠输出','Collapse output'):this.plugin.t('展开输出','Expand output'),()=>void this.setCellConfig(cellId,{expandOutput:!config.expandOutput}));
+    separator();
+    item('cell-up','arrow-up',this.plugin.t('上移','Move up'),()=>this.shiftCell(cellId,-1),this.kbdLabel('Mod+Shift+9'));
+    item('cell-down','arrow-down',this.plugin.t('下移','Move down'),()=>this.shiftCell(cellId,1),this.kbdLabel('Mod+Shift+0'));
+    item('cell-top','arrow-up-to-line',this.plugin.t('移到最前','Send to top'),()=>this.moveCellEdge(cellId,'top'),this.kbdLabel('Mod+Shift+1'));
+    item('cell-bottom','arrow-down-to-line',this.plugin.t('移到最后','Send to bottom'),()=>this.moveCellEdge(cellId,'bottom'),this.kbdLabel('Mod+Shift+2'));
     this.cellMenu=menu;
     // A later interaction elsewhere closes it; this click is already finished.
     this.menuDismiss=(event:Event)=>{if(!menu.contains(event.target as Node))this.closeCellMenu();};
@@ -891,6 +909,78 @@ export class MarimoView extends EditableFileView {
     this.editors.get(cellId)?.view.focus();
   }
 
+  /** Jump the cell to the first or last slot; a one-cell notebook is a no-op. */
+  private moveCellEdge(cellId:string, edge:'top'|'bottom'):void {
+    if(!this.canEditStructure())return;
+    const row=this.rowFor(cellId);
+    if(!row)return;
+    const cells=this.readCells();
+    const from=cells.findIndex(cell=>cell.id===cellId);
+    const target=edge==='top'?0:cells.length-1;
+    const next=moveCell(cells,from,target);
+    if(next.every((cell,index)=>cell.id===cells[index].id))return;
+    const first=this.body.querySelector<HTMLElement>('.marimo-native-cell');
+    if(!first)return;
+    if(edge==='top')first.before(row); else first.parentElement?.append(row);
+    this.cells=this.orderFromDom(next);
+    this.markStructuralChange();
+    this.selectedId=cellId;
+    this.selectCell(cellId,true);
+    this.updateControls();
+    row.scrollIntoView({block:'nearest'});
+    this.editors.get(cellId)?.view.focus();
+  }
+
+  /** Drop a cell's display and console output; the code and status stay. */
+  private clearCellOutput(cellId:string):void {
+    const output=this.outputs.get(cellId);
+    if(!output)return;
+    output.querySelector<HTMLElement>('.marimo-native-display')?.empty();
+    output.querySelector<HTMLElement>('.marimo-native-console')?.empty();
+    this.syncOutputState(output);
+    this.updateStatus();
+  }
+
+  /** Break the cell at the caret: the text after it moves into a new cell. */
+  private async splitCellAt(cellId:string):Promise<void> {
+    const backend=this.backend;
+    const editor=this.editors.get(cellId);
+    if(!backend||!this.canEditStructure()||!editor)return;
+    const doc=editor.view.state.doc.toString();
+    const {before,after}=splitCellCode(doc,editor.view.state.selection.main.head);
+    const operation=++this.operation;
+    this.busy=true;this.updateControls();
+    try {
+      const created=await backend.request('create');
+      if(!shouldApplyResult({backend,operation},{backend:this.backend,operation:this.operation}))return;
+      const id=created.cellId;
+      if(!id)throw new Error(this.plugin.t('适配层未返回单元格标识','The adapter did not return a cell id'));
+      const cells=this.readCells();
+      const at=cells.findIndex(cell=>cell.id===cellId);
+      this.markStructuralChange();
+      this.cells=insertCell(cells,{id,code:after},at+1);
+      const row=this.renderCell(this.cells[at+1],false);
+      const anchor=this.rowFor(cellId);
+      if(anchor)anchor.after(row);
+      // The upper half stays in the original cell; this marks it stale and
+      // repaints its markdown preview when it still is one.
+      editor.view.dispatch({changes:{from:0,to:doc.length,insert:before}});
+      this.updateControls();
+      this.editors.get(id)?.view.focus();
+    } catch(error) {
+      this.structureFailed(backend,operation,error);
+    } finally {
+      if(operation===this.operation){this.busy=false;if(!this.closed)this.updateControls();}
+    }
+  }
+
+  /** Shortcuts are shown the way the platform writes them. */
+  private kbdLabel(keys:string):string {
+    return Platform.isMacOS
+      ? keys.replace(/Mod/g,'⌘').replace(/Shift/g,'⇧').replace(/\+/g,'')
+      : keys.replace(/Mod/g,'Ctrl').replace(/Shift/g,'Shift');
+  }
+
   // ------------------------------------------------- running & cell config
 
   private runCell(cellId:string):Promise<void> {
@@ -943,12 +1033,16 @@ export class MarimoView extends EditableFileView {
     }
   }
 
-  /** Rewrite every cell with the server's formatter; the kernel is untouched. */
-  private async formatCells():Promise<void> {
+  /** Rewrite cells with the server's formatter; the kernel is untouched. */
+  private async formatCells(only?:string):Promise<void> {
     const backend=this.backend;
     if(!backend||!this.canEditStructure()||!this.cells.length)return;
     const codes:Record<string,string>={};
-    for(const cell of this.cells)codes[cell.id]=this.editors.get(cell.id)?.view.state.doc.toString()??cell.code;
+    for(const cell of this.cells) {
+      if(only&&cell.id!==only)continue;
+      codes[cell.id]=this.editors.get(cell.id)?.view.state.doc.toString()??cell.code;
+    }
+    if(!Object.keys(codes).length)return;
     const operation=++this.operation;
     this.busy=true;this.updateControls();
     try {

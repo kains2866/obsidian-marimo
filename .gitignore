@@ -1,0 +1,13 @@
+node_modules
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.ruff_cache/
+.DS_Store
+*.log
+*.tmp
+.venv/
+.env
+.coverage
+coverage/

@@ -1,0 +1,25 @@
+{
+  "name": "obsidian-marimo-notebook",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "obsidian": "1.14.4",
+    "typescript": "6.0.3",
+    "esbuild": "0.28.2",
+    "@types/node": "26.6.5"
+  },
+  "dependencies": {
+    "@codemirror/view": "6.43.13",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/lang-python": "6.2.1",
+    "@codemirror/language": "6.13.1",
+    "@codemirror/commands": "6.11.1",
+    "@lezer/highlight": "1.2.5"
+  }
+}

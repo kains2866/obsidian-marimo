@@ -1,0 +1,17 @@
+.marimo-native {padding: 0 20px 40px; overflow-y: auto; color: var(--text-normal); background: var(--background-primary); font-family: var(--font-interface);}
+.marimo-native-toolbar {position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 52px; padding: 10px 0; background: var(--background-primary); border-bottom: 1px solid var(--background-modifier-border);}
+.marimo-native-toolbar button {font-size: var(--font-ui-small);}
+.marimo-native-status {margin-left: auto; color: var(--text-muted); font-size: var(--font-ui-smaller); overflow-wrap: anywhere;}
+.marimo-native-info {font-size: var(--font-ui-smaller); color: var(--text-muted); margin: 12px 0 20px;}
+.marimo-native-cell {display: grid; grid-template-columns: 36px minmax(0,1fr); margin: 0 0 18px; position: relative;}
+.marimo-native-gutter {padding: 8px 3px;}
+.marimo-native-gutter button {padding: 3px 7px; box-shadow: none; background: none; color: var(--interactive-accent);}
+.marimo-native-cell-content {min-width: 0; border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); overflow: hidden;}
+.marimo-native-cell-content:focus-within {border-color: var(--interactive-accent);}
+.marimo-native-editor {font-size: var(--font-text-size); min-height: 80px; padding: 8px 0; background: var(--background-secondary);}
+.marimo-native-output {padding: 0 14px; overflow-x: auto; user-select: text; font-family: var(--font-text); font-size: var(--font-text-size);}
+.marimo-native-output:has(.marimo-native-display:not(:empty), .marimo-native-console:not(:empty)) {padding-top: 12px; padding-bottom: 12px; border-top: 1px solid var(--background-modifier-border);}
+.marimo-native-output pre {white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; color: var(--text-normal); font-family: var(--font-monospace);}
+.marimo-native-unsupported {font-size: var(--font-ui-smaller); color: var(--text-muted);}
+/* Obsidian button styles otherwise override the HTML hidden attribute. */
+.marimo-native [hidden] {display: none !important;}

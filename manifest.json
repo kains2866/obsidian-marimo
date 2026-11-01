@@ -1,0 +1,9 @@
+{
+  "id": "marimo-notebook",
+  "name": "MarimoNotebook",
+  "version": "0.0.1",
+  "minAppVersion": "1.13.0",
+  "description": "Native marimo frontend \u2014 local experimental prototype.",
+  "author": "Kains",
+  "isDesktopOnly": true
+}

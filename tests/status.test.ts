@@ -56,9 +56,13 @@ test('stopping blocks every action including a second stop',()=>{
 test('an ordinary Python script cannot be connected or restored',()=>{
   assert.deepEqual(toolbarAvailability({connection:'disconnected',run:'none',ready:false,hasDraft:true}),{connect:false,runAll:false,save:false,stop:false,restore:false,interrupt:false,format:false,runStale:false});
 });
-test('the restore action needs both a draft and a live session',()=>{
+test('the restore offer follows the draft, applying it needs a session',()=>{
   assert.equal(toolbarAvailability({connection:'connected',run:'none',ready:true,hasDraft:true}).restore,true);
   assert.equal(toolbarAvailability({connection:'connected',run:'none',ready:true,hasDraft:false}).restore,false);
+  // The offer is visible even before connecting, so a reader reopening the
+  // file learns their unsaved edits survived; clicking it asks to connect.
+  assert.equal(toolbarAvailability({connection:'disconnected',run:'none',ready:true,hasDraft:true}).restore,true);
+  assert.equal(toolbarAvailability({connection:'disconnected',run:'none',ready:true,hasDraft:false}).restore,false);
 });
 
 test('the environment label names the marimo tool, not a raw path',()=>{

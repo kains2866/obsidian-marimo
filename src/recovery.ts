@@ -21,7 +21,9 @@ export class RecoveryStore {
   read(filename:string):Recovery|null {
     const file=this.path(filename);if(!existsSync(file))return null;
     const value=JSON.parse(readFileSync(file,'utf8')) as Recovery;
-    if(value.filename!==filename||!Array.isArray(value.cells)||!value.cells.every(c=>typeof c?.id==='string'&&typeof c?.code==='string')||!Array.isArray(value.baseCodes)||!value.baseCodes.every(c=>typeof c==='string')||value.baseCodes.length!==value.cells.length)throw new Error('Recovery draft is invalid; original cache retained');
+    // A draft that came from structural edits legitimately holds a different
+    // number of cells than the file baseline; only types are validated here.
+    if(value.filename!==filename||!Array.isArray(value.cells)||!value.cells.every(c=>c&&typeof c?.id==='string'&&typeof c?.code==='string')||!Array.isArray(value.baseCodes)||!value.baseCodes.every(c=>typeof c==='string'))throw new Error('Recovery draft is invalid; original cache retained');
     return value;
   }
   remove(filename:string):void {const file=this.path(filename);if(existsSync(file))unlinkSync(file);}

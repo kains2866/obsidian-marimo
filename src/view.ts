@@ -206,7 +206,12 @@ export class MarimoView extends EditableFileView {
         return;
       }
       this.notebookReady=preview.isMarimo;
-      if(preview.isMarimo){this.cells=preview.cells;this.baseCodes=preview.cells.map(cell=>cell.code);this.renderCells(true);}
+      if(preview.isMarimo){
+        this.cells=preview.cells;this.baseCodes=preview.cells.map(cell=>cell.code);this.renderCells(true);
+        // A draft is worth advertising before connecting: the read-only
+        // preview already shows the restore offer.
+        this.refreshRecovery();
+      }
       else this.showSource(source, this.plugin.t('普通 Python 脚本 · 只读','Python script · read-only'));
       this.updateControls();
     }catch(error){
@@ -225,7 +230,7 @@ export class MarimoView extends EditableFileView {
     this.loadGeneration++;this.inspection?.abort();this.connecting=false;this.stopping=false;
     this.disconnect();
     this.filename=file.path;
-    if(this.dirty)this.plugin.saveRecovery(this.filename,this.readCells(),[...this.baseCodes]);
+    this.persistDraft();
     this.showNotice(this.plugin.t('文件已重命名，请重新连接。','File renamed; reconnect to continue.'),'info');
     this.updateControls();
   }
@@ -353,7 +358,7 @@ export class MarimoView extends EditableFileView {
     this.connecting=false;
     this.busy=false;
     this.widgetPending.clear();
-    if(this.dirty)try{this.plugin.saveRecovery(this.filename,this.readCells(),[...this.baseCodes]);}catch(error){new Notice(String(error));}
+    this.persistDraft();
     this.setCellsReadOnly();
     this.clearCellStatuses();
     const lease=this.lease;this.lease=null;
@@ -1103,6 +1108,18 @@ export class MarimoView extends EditableFileView {
 
   // ---------------------------------------------------------------- drafts
 
+  /**
+   * Persist unsaved edits as a recovery draft — but only while the notebook
+   * still exists in the vault. Closing a leaf after the file was trashed must
+   * not resurrect a draft the caller just removed.
+   */
+  private persistDraft():void {
+    if(!this.dirty)return;
+    if(!this.filename||!this.app.vault.getAbstractFileByPath(this.filename))return;
+    try{this.plugin.saveRecovery(this.filename,this.readCells(),[...this.baseCodes]);}
+    catch{new Notice(this.plugin.t('无法保存编辑草稿，请检查本机目录权限。','Could not save recovery draft. Check local directory permissions.'));}
+  }
+
   private refreshRecovery():void {
     try{
       this.hasDraft = !!this.plugin.recovery.read(this.filename);
@@ -1130,7 +1147,12 @@ export class MarimoView extends EditableFileView {
   private async restoreDraft():Promise<void> {
     try {
       const draft=this.plugin.recovery.read(this.filename);const backend=this.backend;
-      if(!draft||!backend||!this.canEditStructure())return;
+      if(!draft)return;
+      // The offer is visible without a session; applying it needs one.
+      if(!backend||!this.canEditStructure()){
+        this.showNotice(this.plugin.t('连接后可恢复草稿。','Connect to restore the draft.'),'info');
+        return;
+      }
       if(JSON.stringify(draft.baseCodes)!==JSON.stringify(this.baseCodes))throw new Error(this.plugin.t('原文件与草稿基线不同，草稿保留供手动恢复。','Draft baseline differs from the file; draft retained for manual recovery.'));
       const operation=++this.operation;
       this.busy=true;this.updateControls();
@@ -1155,7 +1177,7 @@ export class MarimoView extends EditableFileView {
     this.operation++;this.busy=false;
     // A queued widget value has no session to reach any more.
     this.widgetPending.clear();
-    if(this.dirty)try{this.plugin.saveRecovery(this.filename,this.readCells(),[...this.baseCodes]);}catch(error){new Notice(String(error));}
+    this.persistDraft();
     const backend=this.backend;this.backend=null;
     void backend?.close().catch(error=>new Notice(String(error)));
     this.releaseLease();
@@ -1169,10 +1191,7 @@ export class MarimoView extends EditableFileView {
     this.operation++;this.busy=false;this.connecting=false;this.stopping=false;this.notebookReady=false;
     this.widgetPending.clear();
     this.inspection?.abort();this.inspection=null;
-    if(this.dirty) {
-      try{this.plugin.saveRecovery(this.filename,this.readCells(),[...this.baseCodes]);}
-      catch{new Notice(this.plugin.t('无法保存编辑草稿，请检查本机目录权限。','Could not save recovery draft. Check local directory permissions.'));}
-    }
+    this.persistDraft();
     const backend=this.backend;this.backend=null;
     const lease=this.lease;this.lease=null;
     try{await backend?.close();}catch(error){new Notice(String(error));}

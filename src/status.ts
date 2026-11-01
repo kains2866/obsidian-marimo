@@ -99,7 +99,10 @@ export function toolbarAvailability(input: ToolbarInput): ToolbarAvailability {
     save: live && !busy,
     // Stop stays reachable while connecting so a hung start can be abandoned.
     stop: !stopping && (live || input.connection === 'connecting'),
-    restore: live && !busy && input.ready && input.hasDraft,
+    // The restore offer is visible as soon as a draft exists (the read-only
+    // preview tells the reader their edits survived); applying it still needs
+    // a session, and clicking without one asks the user to connect.
+    restore: input.ready && input.hasDraft && !busy,
     // Interrupt is the only action that must stay live during `running`.
     interrupt: live && !stopping && input.run === 'running',
     format: live && !busy,

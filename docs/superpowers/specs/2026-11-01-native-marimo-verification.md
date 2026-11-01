@@ -166,3 +166,13 @@ WorkBuddy 对安装源码进行了独立只读调查，提供了路由、通知�
 - 测试：`tests/markdown-cell.test.ts` 10 项、`tests/output-policy.test.ts` 增 marimo-tex 还原。Node 100 项、Python 61 项全部通过；typecheck/build 通过；dist 三文件与 Temp 安装 sha256 一致。
 
 本轮仍未验证：markdown 单元格内引用 vault 图片的相对路径解析、`mo.md` 多段拼接（`mo.as_html`）、Windows/Linux。
+
+## 恢复草稿修复（报错「Recovery draft is invalid」）
+
+结论：报错不是草稿损坏，而是读取校验与写入规则自相矛盾——结构编辑（插入/删除单元格）后的合法草稿本来就允许 cells 数与文件基线数不同（`write` 接受不对称，`read` 却强制相等），导致"结构编辑后未保存 → 重开"这条路径必然报错。
+
+- `read()` 放宽为仅校验类型（filename 匹配、cells/baseCodes 数组、id/code 为字符串），不再比较长度；损坏数据仍抛错（测试覆盖）。
+- 草稿复活修复：trash 文件后 leaf 关闭，`onClose` 里的 dirty 写回会重新生成刚被清理的草稿——新增 `persistDraft()` 守卫，文件已不在 vault 时不再写草稿。`stop`/`disconnect`/`onRename`/`releaseFileSession` 四处统一走该守卫。
+- 恢复入口改进：只读预览（未连接）即读取草稿并显示「恢复草稿」按钮，点击无会话时提示"连接后可恢复"，不再静默无反应；`status.ts` 的 restore 可用性同步调整。
+- 残留清理：草稿目录堆积 13 个历史草稿（fixture 已删但草稿被上述 bug 复活），备份至 `/tmp/marimo-drafts-backup-20261101` 后清空。
+- 宿主回归（`assets/verify-draft-fix.py`）：结构编辑→停止→重开无报错、恢复按钮出现、点击后 3 个单元格与代码 `extra = 1` 恢复正确、trash 后草稿不复活。Node 102 项通过；typecheck/build 通过。

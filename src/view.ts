@@ -25,6 +25,10 @@ import type MarimoPlugin from './main';
 import type {WriterLease} from './writer-lock';
 
 export const VIEW_TYPE = 'marimo-native-notebook';
+/** Cells rendered before the first paint of a read-only preview. */
+const PREVIEW_FIRST_SCREEN = 60;
+/** How many queued rows are mounted per idle turn. */
+const PREVIEW_BATCH = 40;
 
 interface CellEditor {
   view: EditorView;
@@ -75,6 +79,9 @@ export class MarimoView extends EditableFileView {
   selectedId: string | null = null;
   /** When this view was last the active leaf; sidebar panels follow the latest. */
   lastActive = 0;
+  /** Rows of a large read-only preview still waiting to be mounted. */
+  private previewQueue: Cell[] = [];
+  private previewTimer: number|null = null;
   private operation = 0;
   /** Latest unsent value per widget, so a fast drag cannot pile up cycles. */
   private widgetPending = new Map<string, unknown>();
@@ -665,6 +672,8 @@ export class MarimoView extends EditableFileView {
   // ---------------------------------------------------------------- cells
 
   private renderCells(readOnly=false): void {
+    if(this.previewTimer!==null){clearTimeout(this.previewTimer);this.previewTimer=null;}
+    this.previewQueue=[];
     this.sourceEditor?.destroy();this.sourceEditor=null;
     for(const editor of this.editors.values()) editor.view.destroy();
     this.editors.clear(); this.outputs.clear();
@@ -683,13 +692,48 @@ export class MarimoView extends EditableFileView {
       this.body.createDiv({cls:'marimo-native-empty',text:this.plugin.t('此 Notebook 没有单元格。','This notebook has no cells.')});
       return;
     }
-    for(const cell of this.cells) this.renderCell(cell, readOnly);
+    // A read-only preview of a very large notebook is static: rendering it in
+    // one go costs ~12ms per cell (a CodeMirror instance each), so the first
+    // screen appears immediately and the rest fills in while idle. A connected
+    // notebook is rendered whole — a late frame would otherwise paint into a
+    // row that does not exist yet.
+    const firstScreen=readOnly?Math.min(this.cells.length,PREVIEW_FIRST_SCREEN):this.cells.length;
+    for(const cell of this.cells.slice(0,firstScreen)) this.renderCell(cell,readOnly);
+    if(firstScreen<this.cells.length) this.renderRestInBackground(readOnly);
     // Re-rendering replaces every row, so the previous selection must be restored
     // or the accent rail would silently vanish after connecting.
     if(this.selectedId && this.cells.some(cell=>cell.id===this.selectedId)) this.selectCell(this.selectedId, true);
     this.reflowColumns();
     this.updateControls();
     this.refreshOutline();
+  }
+
+  private async renderRestInBackground(readOnly:boolean): Promise<void> {
+    this.previewQueue=this.cells.slice(PREVIEW_FIRST_SCREEN);
+    this.previewTimer=window.setTimeout(()=>this.renderQueueStep(readOnly),32);
+  }
+
+  private renderQueueStep(readOnly:boolean): void {
+    this.previewTimer=null;
+    if(this.closed)return;
+    const chunk=this.previewQueue.splice(0,PREVIEW_BATCH);
+    for(const cell of chunk) this.renderCell(cell,readOnly);
+    if(this.previewQueue.length) {
+      this.previewTimer=window.setTimeout(()=>this.renderQueueStep(readOnly),16);
+      return;
+    }
+    this.reflowColumns();
+    this.updateControls();
+  }
+
+  /** A jump target may still be queued: mount everything before revealing it. */
+  private flushPreviewQueue(): void {
+    if(this.previewTimer!==null){clearTimeout(this.previewTimer);this.previewTimer=null;}
+    if(!this.previewQueue.length)return;
+    const chunk=this.previewQueue.splice(0);
+    for(const cell of chunk) this.renderCell(cell,true);
+    this.reflowColumns();
+    this.updateControls();
   }
 
   private renderCell(cell:Cell, readOnly:boolean): HTMLElement {
@@ -1558,6 +1602,7 @@ export class MarimoView extends EditableFileView {
 
   /** Jump from the sidebar outline (or rail) to a cell and select it. */
   revealCell(cellId:string): void {
+    this.flushPreviewQueue();
     this.rowFor(cellId)?.scrollIntoView({block:'start',behavior:'smooth'});
     this.selectCell(cellId);
   }
@@ -2110,6 +2155,8 @@ export class MarimoView extends EditableFileView {
     this.closed=true;this.loadGeneration++;this.inspection?.abort();
     this.exitOutputFullscreen();
     if(this.outlineTimer){clearTimeout(this.outlineTimer);this.outlineTimer=null;}
+    if(this.previewTimer!==null){clearTimeout(this.previewTimer);this.previewTimer=null;}
+    this.previewQueue=[];
     // The sidebar outline follows the active notebook; this one is gone.
     this.app.workspace.trigger('marimo-outline-changed',this);
     this.closing=this.releaseFileSession();return this.closing;

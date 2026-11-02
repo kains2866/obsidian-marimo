@@ -442,6 +442,40 @@ function buildWidget(element: UiElement, innerHtml: string, deps: WidgetDeps): H
       }
       break;
     }
+    case 'dataframe': {
+      // marimo's dataframe converter is a React app driven by function RPCs
+      // (get_dataframe/search/download_as). Rather than fake the grid, show
+      // what is cheap and true: the dataframe's name, size and column types,
+      // which is exactly what the model needs to write the equivalent code.
+      const name = typeof attrs.dataframeName === 'string' && attrs.dataframeName ? attrs.dataframeName : 'df';
+      const total = typeof attrs.total === 'number' ? attrs.total : numberAttribute(attrs, 'total', 0);
+      const head = node('div', 'marimo-native-dataframe-head');
+      head.textContent = total ? `${name} · ${deps.translate(total + ' 行', total + ' rows')}` : name;
+      const columns = Array.isArray(attrs.columns) ? attrs.columns : [];
+      const list = node('div', 'marimo-native-dataframe-columns');
+      for (const entry of columns.slice(0, 40)) {
+        if (!Array.isArray(entry) || !entry.length) continue;
+        const line = node('div', 'marimo-native-dataframe-column');
+        const column = node('span', 'marimo-native-dataframe-column-name');
+        column.textContent = String(entry[0]);
+        column.setAttribute('data-column', String(entry[0]));
+        line.append(column);
+        if (entry[1]) {
+          const type = node('span', 'marimo-native-dataframe-column-type');
+          type.textContent = String(entry[1]);
+          line.append(type);
+        }
+        list.append(line);
+      }
+      const note = node('div', 'marimo-native-widget-note');
+      note.textContent = deps.translate(
+        '可视化转换器需要原生前端：用工具栏「在浏览器打开」编辑，或直接写下等价的 pandas / polars 代码。',
+        'The visual converter needs the native frontend: use "Open in browser", or write the equivalent pandas / polars code.');
+      wrapper.append(head);
+      if (columns.length) wrapper.append(list);
+      wrapper.append(note);
+      break;
+    }
     default:
       break;
   }

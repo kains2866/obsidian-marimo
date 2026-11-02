@@ -29,6 +29,9 @@ const SUPPORTED = new Set([
   'slider', 'range-slider', 'number', 'text', 'text-area', 'checkbox', 'switch',
   'radio', 'dropdown', 'multiselect', 'date', 'datetime', 'button', 'tabs',
   'form', 'table',
+  // The converter itself is a React app; this frontend shows a read-only
+  // structure preview, which is more useful than an "unsupported" line.
+  'dataframe',
 ]);
 
 export function isSupportedWidget(kind: string): boolean {

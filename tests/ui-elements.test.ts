@@ -215,3 +215,17 @@ test('table search and sort keep original row indices', () => {
   assert.equal(limited.rows.length, 2);
   assert.deepEqual(limited.rows.map(r => r.index), [0, 1]);
 });
+
+test('a dataframe element is claimed for a read-only preview', () => {
+  // Its converter is a React component; the preview lists columns instead of
+  // pretending to be one, so the kind must not fall into "unsupported".
+  assert.equal(isSupportedWidget('dataframe'), true);
+  const markup = "<marimo-ui-element object-id='d1'><marimo-dataframe data-columns='[[&quot;name&quot;,&quot;String&quot;,&quot;String&quot;],[&quot;v&quot;,&quot;Int64&quot;,&quot;Int64&quot;]]' data-dataframe-name='df' data-total='120'></marimo-dataframe></marimo-ui-element>";
+  const extracted = extractUiElements(markup);
+  assert.equal(extracted.widgets.length, 1);
+  const element = extracted.widgets[0].element;
+  assert.equal(element.kind, 'dataframe');
+  assert.equal(element.attrs.dataframeName, 'df');
+  assert.equal(element.attrs.total, 120);
+  assert.deepEqual((element.attrs.columns as unknown[]).length, 2);
+});

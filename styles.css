@@ -113,6 +113,21 @@
    so the notebook owns the full editor width. */
 .marimo-native-cells { position: relative; padding-top: 6px; min-width: 0; }
 
+/* marimo's horizontal distribution: column configs split the notebook into
+   side-by-side tracks. A notebook without column configs never sees these. */
+.marimo-native-columns {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.marimo-native-column {
+  flex: 1 1 0;
+  min-width: 0;
+}
+@media (max-width: 650px) {
+  .marimo-native-columns { flex-direction: column; }
+}
+
 .marimo-native-cell {
   position: relative;
   display: grid;

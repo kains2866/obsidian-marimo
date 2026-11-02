@@ -649,6 +649,7 @@ export class MarimoView extends EditableFileView {
     // Re-rendering replaces every row, so the previous selection must be restored
     // or the accent rail would silently vanish after connecting.
     if(this.selectedId && this.cells.some(cell=>cell.id===this.selectedId)) this.selectCell(this.selectedId, true);
+    this.reflowColumns();
     this.updateControls();
     this.refreshOutline();
   }
@@ -1093,6 +1094,17 @@ export class MarimoView extends EditableFileView {
     item('cell-down','arrow-down',this.plugin.t('下移','Move down'),()=>this.shiftCell(cellId,1),this.kbdLabel('Mod+Shift+0'));
     item('cell-top','arrow-up-to-line',this.plugin.t('移到最前','Send to top'),()=>this.moveCellEdge(cellId,'top'),this.kbdLabel('Mod+Shift+1'));
     item('cell-bottom','arrow-down-to-line',this.plugin.t('移到最后','Send to bottom'),()=>this.moveCellEdge(cellId,'bottom'),this.kbdLabel('Mod+Shift+2'));
+    separator();
+    // marimo's horizontal distribution: a cell may sit in any column.
+    item('column-new','columns-2',this.plugin.t('移到新列','Move to a new column'),()=>{
+      const max=this.cells.reduce((current,item)=>Math.max(current,readCellConfig(item.config).column??0),0);
+      void this.setCellConfig(cellId,{column:max+1});
+    });
+    if(config.column!==null&&config.column>0) {
+      item('column-main','columns-1',this.plugin.t('移回首列','Move to the first column'),()=>{
+        void this.setCellConfig(cellId,{column:null});
+      });
+    }
     this.cellMenu=menu;
     this.placeFloatingMenu(menu);
     // A later interaction elsewhere closes it; this click is already finished.
@@ -1200,6 +1212,32 @@ export class MarimoView extends EditableFileView {
     this.dirty=true;
     if(this.runPhase!=='none')this.changedSinceRun=true;
   }
+
+  /**
+   * Arrange rows into columns without rebuilding them: moving DOM nodes keeps
+   * editors, outputs and scroll position. A notebook without column configs
+   * keeps the flat layout, so nothing changes visually until a cell moves.
+   */
+  private reflowColumns():void {
+    if(this.closed||!this.body)return;
+    const max=this.cells.reduce((current,item)=>Math.max(current,readCellConfig(item.config).column??0),0);
+    this.body.querySelectorAll(':scope > .marimo-native-columns').forEach(el=>el.remove());
+    if(max===0) {
+      for(const cell of this.cells) {
+        const row=this.rowFor(cell.id);
+        if(row)this.body.appendChild(row);
+      }
+      return;
+    }
+    const wrapper=this.body.createDiv({cls:'marimo-native-columns'});
+    const columns:HTMLElement[]=[];
+    for(let index=0;index<=max;index++)columns.push(wrapper.createDiv({cls:'marimo-native-column'}));
+    for(const cell of this.cells) {
+      const column=readCellConfig(cell.config).column??0;
+      const row=this.rowFor(cell.id);
+      if(row)columns[Math.min(column,max)].appendChild(row);
+    }
+  }
   private structureFailed(backend:Backend, operation:number, error:unknown):void {
     if(!shouldApplyResult({backend,operation},{backend:this.backend,operation:this.operation}))return;
     if(!this.closed){this.disconnect();this.showNotice(String(error),'error');new Notice(String(error));}
@@ -1242,6 +1280,7 @@ export class MarimoView extends EditableFileView {
         const view=this.editors.get(id)?.view;
         if(view)view.dispatch({changes:{from:0,to:view.state.doc.length,insert:cellTemplate(kind)}});
       }
+      this.reflowColumns();
       this.editors.get(id)?.view.focus();
       this.refreshOutline();
       return id;
@@ -1436,6 +1475,7 @@ export class MarimoView extends EditableFileView {
       this.selectedId=neighbour?.id??null;
       if(this.selectedId)this.selectCell(this.selectedId,true);
       this.updateControls();
+      this.reflowColumns();
       this.refreshOutline();
     } catch(error) {
       this.structureFailed(backend,operation,error);
@@ -1455,14 +1495,6 @@ export class MarimoView extends EditableFileView {
     return this.body.querySelector<HTMLElement>(`.marimo-native-cell[data-cell-id="${CSS.escape(cellId)}"]`);
   }
 
-  /** The model order always follows the rows, so the two cannot drift apart. */
-  private orderFromDom(cells:Cell[]):Cell[] {
-    const byId=new Map(cells.map(cell=>[cell.id,cell]));
-    return Array.from(this.body.querySelectorAll<HTMLElement>('.marimo-native-cell'))
-      .map(row=>byId.get(row.dataset.cellId??''))
-      .filter((cell):cell is Cell=>cell!==undefined);
-  }
-
   /** Reordering is local: only the save request decides the file order. */
   private shiftCell(cellId:string, delta:number):void {
     if(!this.canEditStructure())return;
@@ -1470,13 +1502,11 @@ export class MarimoView extends EditableFileView {
     const from=cells.findIndex(cell=>cell.id===cellId);
     const next=moveCell(cells,from,from+delta);
     if(next.every((cell,index)=>cell.id===cells[index].id))return;
-    const row=this.rowFor(cellId);
-    const sibling=delta<0?row?.previousElementSibling:row?.nextElementSibling;
-    if(!row||!(sibling instanceof HTMLElement)||!sibling.classList.contains('marimo-native-cell'))return;
-    // Moving the row instead of rebuilding it keeps editors, outputs and scroll.
-    if(delta<0)sibling.before(row); else sibling.after(row);
-    this.cells=this.orderFromDom(next);
+    // The model order is authoritative; the DOM follows via reflow, which
+    // also keeps multi-column layouts correct.
+    this.cells=next;
     this.markStructuralChange();
+    this.reflowColumns();
     this.selectedId=cellId;
     this.selectCell(cellId,true);
     this.updateControls();
@@ -1486,22 +1516,19 @@ export class MarimoView extends EditableFileView {
   /** Jump the cell to the first or last slot; a one-cell notebook is a no-op. */
   private moveCellEdge(cellId:string, edge:'top'|'bottom'):void {
     if(!this.canEditStructure())return;
-    const row=this.rowFor(cellId);
-    if(!row)return;
     const cells=this.readCells();
     const from=cells.findIndex(cell=>cell.id===cellId);
     const target=edge==='top'?0:cells.length-1;
     const next=moveCell(cells,from,target);
     if(next.every((cell,index)=>cell.id===cells[index].id))return;
-    const first=this.body.querySelector<HTMLElement>('.marimo-native-cell');
-    if(!first)return;
-    if(edge==='top')first.before(row); else first.parentElement?.append(row);
-    this.cells=this.orderFromDom(next);
+    this.cells=next;
     this.markStructuralChange();
+    this.reflowColumns();
+    const row=this.rowFor(cellId);
     this.selectedId=cellId;
     this.selectCell(cellId,true);
     this.updateControls();
-    row.scrollIntoView({block:'nearest'});
+    row?.scrollIntoView({block:'nearest'});
     this.editors.get(cellId)?.view.focus();
   }
 
@@ -1543,6 +1570,7 @@ export class MarimoView extends EditableFileView {
       // repaints its markdown preview when it still is one.
       editor.view.dispatch({changes:{from:0,to:doc.length,insert:before}});
       this.updateControls();
+      this.reflowColumns();
       this.editors.get(id)?.view.focus();
     } catch(error) {
       this.structureFailed(backend,operation,error);
@@ -1602,6 +1630,8 @@ export class MarimoView extends EditableFileView {
       this.dirty=true;
       const row=this.rowFor(cellId);
       if(row)this.applyCellConfig(row,cellId);
+      // A column change reflows the DOM rows without touching outputs.
+      if(patch.column!==undefined)this.reflowColumns();
       this.updateStatus();
     } catch(error) {
       this.structureFailed(backend,operation,error);

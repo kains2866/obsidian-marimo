@@ -1397,7 +1397,14 @@ export class MarimoView extends EditableFileView {
       const at=afterId===null?-1:cells.findIndex(cell=>cell.id===afterId);
       const index=at<0?cells.length:at+1;
       this.markStructuralChange();
-      this.cells=insertCell(cells,{id,code:''},index);
+      // A typed row is born with its template: rendering from the real code
+      // lets every markdown affordance (formatting toolbar, preview click,
+      // double-click edit, focus-out collapse) attach on the first paint,
+      // exactly like a cell loaded from the file. Rendering an empty row and
+      // typing the template in later used to leave the row without any of
+      // those handlers — a new markdown cell could not be clicked into edit.
+      const template=cellTemplate(kind);
+      this.cells=insertCell(cells,{id,code:kind==='markdown'?encodeMarkdownCell(template):template},index);
       // Only the new row is built: re-rendering every cell would throw away the
       // outputs the kernel already produced for the others.
       const row=this.renderCell(this.cells[index],false);
@@ -1406,20 +1413,10 @@ export class MarimoView extends EditableFileView {
       this.selectedId=id;
       this.selectCell(id,true);
       this.updateControls();
-      // A typed cell receives its starter code through the editor so the
-      // regular edit pipeline (staleness, outline) applies. Markdown starts
-      // in markdown mode directly: bare template text never matches the
-      // `mo.md(...)` auto-detection, which only reads stored python code.
-      if(kind==='markdown') {
-        this.markdownMode.add(id);
-        this.markdownFStrings.delete(id);
-        row.addClass('is-markdown');
-      }
-      if(kind!=='python') {
-        const view=this.editors.get(id)?.view;
-        if(view)view.dispatch({changes:{from:0,to:view.state.doc.length,insert:cellTemplate(kind)}});
-      }
       this.reflowColumns();
+      // A markdown row folds its source: open it so the caret lands in the
+      // editor and the user can type right away.
+      if(kind==='markdown')this.openMarkdownSource(id);
       this.editors.get(id)?.view.focus();
       this.refreshOutline();
       return id;

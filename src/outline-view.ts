@@ -127,7 +127,10 @@ export class MarimoOutlineView extends ItemView {
   private cellLabel(notebook:MarimoView,cellId:string):string {
     const code=notebook.cellSource(cellId);
     const line=code.split('\n').map(entry=>entry.trim()).find(entry=>entry.length>0);
-    return line??'';
+    if(!line)return '';
+    // A markdown cell's first line is usually a heading: the raw `##` marker
+    // reads like a Python comment in the faint monospace label, so strip it.
+    return line.replace(/^#{1,6}\s+/, '');
   }
 
   /** The MINIMAP | GRAPH segmented toggle, styled after marimo's own. */

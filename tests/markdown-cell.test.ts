@@ -1,6 +1,15 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {encodeMarkdownCell, outlineEntries, parseMarkdownCell} from '../src/markdown-cell.ts';
+import {MARKDOWN_CELL_TEMPLATE} from '../src/cell-templates.ts';
+
+test('the new-cell markdown template round-trips as a markdown row', () => {
+  // A created markdown row is rendered straight from this encoded template,
+  // so every markdown affordance — formatting toolbar, preview click and
+  // double-click edit — attaches on the first paint instead of never.
+  const code = encodeMarkdownCell(MARKDOWN_CELL_TEMPLATE);
+  assert.deepEqual(parseMarkdownCell(code), {markdown: MARKDOWN_CELL_TEMPLATE, prefix: ''});
+});
 
 test('a plain mo.md call with a double-quoted literal is markdown', () => {
   assert.deepEqual(parseMarkdownCell('mo.md("# Hi")'), {markdown: '# Hi', prefix: ''});

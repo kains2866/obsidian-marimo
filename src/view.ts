@@ -102,6 +102,9 @@ export class MarimoView extends EditableFileView {
   private markdownFStrings = new Set<string>();
   /** The outline is a dock view; edits are debounced before it is notified. */
   private outlineTimer: ReturnType<typeof setTimeout>|null = null;
+  /** A fullscreen output lives on document.body; this is how it goes home. */
+  private fullscreenReturn: {el:HTMLElement;parent:Node;next:Node|null}|null = null;
+  private fullscreenEsc: ((event:KeyboardEvent)=>void)|null = null;
   constructor(leaf: WorkspaceLeaf, private plugin: MarimoPlugin) {super(leaf);}
   isClosed():boolean {return this.closed;}
   getViewType(): string {return VIEW_TYPE;}
@@ -592,6 +595,8 @@ export class MarimoView extends EditableFileView {
     this.markdownMode.clear();
     for(const timer of this.markdownTimers.values()) clearTimeout(timer);
     this.markdownTimers.clear();
+    // A re-render replaces every row; a fullscreen output must go home first.
+    this.exitOutputFullscreen();
     this.body.empty();
     this.previewNote.hidden = !readOnly;
     if(readOnly) this.previewNote.setText(this.plugin.t('只读预览 · 连接后可编辑并运行单元格','Read-only preview · Connect to edit and run cells'));
@@ -723,6 +728,15 @@ export class MarimoView extends EditableFileView {
     const output=content.createDiv({cls:'marimo-native-output markdown-rendered'});
     output.createDiv({cls:'marimo-native-display'});
     output.createDiv({cls:'marimo-native-console'});
+    // Native marimo reveals a fullscreen control on output hover; the output
+    // detaches to the document root so host zoom/transforms cannot bend the
+    // fixed-position overlay (the same lesson the floating menus taught).
+    const fullscreen=output.createEl('button',{cls:'marimo-native-fullscreen'});
+    fullscreen.dataset.action='output-fullscreen';
+    fullscreen.setAttr('aria-label',this.plugin.t('全屏输出','Fullscreen output'));
+    fullscreen.setAttr('title',this.plugin.t('全屏输出','Fullscreen output'));
+    setIcon(fullscreen,'maximize');
+    fullscreen.onclick=event=>{event.stopPropagation();this.toggleOutputFullscreen(output);};
     this.outputs.set(cell.id,output);
     if(markdown) {
       // Native marimo opens the editor when the rendered markdown is
@@ -1312,6 +1326,32 @@ export class MarimoView extends EditableFileView {
     this.selectCell(cellId);
   }
 
+  // ---------------------------------------------------------- fullscreen output
+
+  /** Expand one cell's output over the whole window; click or Esc reverts. */
+  toggleOutputFullscreen(output:HTMLElement): void {
+    if(this.fullscreenReturn) {this.exitOutputFullscreen();return;}
+    if(!output.parentNode)return;
+    this.fullscreenReturn={el:output,parent:output.parentNode,next:output.nextSibling};
+    document.body.appendChild(output);
+    output.addClass('is-fullscreen');
+    this.fullscreenEsc=(event:KeyboardEvent)=>{
+      if(event.key==='Escape'){event.preventDefault();this.exitOutputFullscreen();}
+    };
+    document.addEventListener('keydown',this.fullscreenEsc,true);
+  }
+
+  /** Put the output back exactly where the cell keeps it. */
+  exitOutputFullscreen(): void {
+    const saved=this.fullscreenReturn;
+    if(!saved)return;
+    this.fullscreenReturn=null;
+    saved.el.removeClass('is-fullscreen');
+    if(saved.parent.isConnected)saved.parent.insertBefore(saved.el,saved.next);
+    else saved.el.remove();
+    if(this.fullscreenEsc){document.removeEventListener('keydown',this.fullscreenEsc,true);this.fullscreenEsc=null;}
+  }
+
   /** Outline follows markdown edits, debounced like the preview repaint. */
   private scheduleOutlineRefresh(): void {
     if(this.outlineTimer)clearTimeout(this.outlineTimer);
@@ -1789,6 +1829,7 @@ export class MarimoView extends EditableFileView {
     if(this.closing)return this.closing;
     if(this.keyScope){this.app.keymap.popScope(this.keyScope);this.keyScope=null;}
     this.closed=true;this.loadGeneration++;this.inspection?.abort();
+    this.exitOutputFullscreen();
     if(this.outlineTimer){clearTimeout(this.outlineTimer);this.outlineTimer=null;}
     // The sidebar outline follows the active notebook; this one is gone.
     this.app.workspace.trigger('marimo-outline-changed',this);

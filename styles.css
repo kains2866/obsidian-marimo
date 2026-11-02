@@ -429,7 +429,44 @@
   padding: 12px 14px;
   border-top: 1px solid var(--background-modifier-border);
   min-height: max(24px, calc(var(--font-text-size, 16px) * 1.5));
+  position: relative;
 }
+/* Native marimo's hover control: fullscreen lives in the output's corner. */
+.marimo-native-fullscreen {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  color: var(--text-muted);
+  cursor: pointer;
+  box-shadow: var(--shadow-s);
+  z-index: 2;
+}
+.marimo-native-output.has-output:hover .marimo-native-fullscreen { display: flex; }
+.marimo-native-fullscreen:hover { color: var(--text-normal); }
+.marimo-native-fullscreen svg { width: 14px; height: 14px; }
+/* Expanded: the output covers the window. It is reparented to document.body,
+   so a plain fixed overlay lands correctly regardless of host zoom. */
+.marimo-native-output.is-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: var(--layer-popover, 99);
+  max-height: none;
+  overflow: auto;
+  padding: 24px 28px;
+  border: none;
+  border-radius: 0;
+  background: var(--background-primary);
+}
+.marimo-native-output.is-fullscreen .marimo-native-fullscreen { display: flex; position: fixed; top: 14px; right: 14px; }
 .marimo-native-output pre,
 .marimo-native-text {
   margin: 0;

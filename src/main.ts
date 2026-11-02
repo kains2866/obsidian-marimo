@@ -62,6 +62,11 @@ export default class MarimoPlugin extends Plugin {
       if(!view) {new Notice(this.t('请先打开一个 marimo notebook。','Open a marimo notebook first.'));return;}
       void view.openInBrowser();
     }});
+    this.addCommand({id:'marimo-toggle-fullscreen',name:this.t('整个 notebook 进入/退出全屏','Toggle notebook fullscreen'),callback:()=>{
+      const view=this.app.workspace.getActiveViewOfType(MarimoView);
+      if(!view) {new Notice(this.t('请先打开一个 marimo notebook。','Open a marimo notebook first.'));return;}
+      view.toggleViewFullscreen();
+    }});
     this.addCommand({id:'marimo-generate-with-ai',name:this.t('用 AI 生成单元格','Generate a cell with AI'),callback:()=>{
       const view=this.app.workspace.getActiveViewOfType(MarimoView);
       if(!view) {new Notice(this.t('请先打开一个 marimo notebook。','Open a marimo notebook first.'));return;}

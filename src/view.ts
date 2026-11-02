@@ -117,6 +117,7 @@ export class MarimoView extends EditableFileView {
   /** A fullscreen output lives on document.body; this is how it goes home. */
   private fullscreenReturn: {el:HTMLElement;parent:Node;next:Node|null}|null = null;
   private fullscreenEsc: ((event:KeyboardEvent)=>void)|null = null;
+  private fullscreenOverlay: HTMLElement|null = null;
   /** Kernel-pushed dataflow state for the sidebar variables panel. */
   private variableDecls: {name:string;declared_by:string[];used_by:string[]}[] = [];
   private variableValues = new Map<string,{name:string;datatype:string|null;value:string|null}>();
@@ -1622,13 +1623,22 @@ export class MarimoView extends EditableFileView {
 
   // ---------------------------------------------------------- fullscreen output
 
-  /** Expand one cell's output over the whole window; click or Esc reverts. */
+  /** Expand one cell's output over a dimmed, centered overlay; Esc exits. */
   toggleOutputFullscreen(output:HTMLElement): void {
     if(this.fullscreenReturn) {this.exitOutputFullscreen();return;}
     if(!output.parentNode)return;
     this.fullscreenReturn={el:output,parent:output.parentNode,next:output.nextSibling};
-    document.body.appendChild(output);
+    const overlay=document.body.createDiv('marimo-native-output-overlay');
+    const close=overlay.createEl('button',{cls:'marimo-native-output-close clickable-icon'});
+    close.setAttr('aria-label',this.plugin.t('关闭全屏输出','Close fullscreen output'));
+    close.setAttr('title',this.plugin.t('关闭全屏输出 (Esc)','Close fullscreen output (Esc)'));
+    setIcon(close,'x');
+    const stage=overlay.createDiv('marimo-native-output-stage');
+    stage.appendChild(output);
     output.addClass('is-fullscreen');
+    overlay.addEventListener('mousedown',event=>{if(event.target===overlay)this.exitOutputFullscreen();});
+    close.addEventListener('click',()=>this.exitOutputFullscreen());
+    this.fullscreenOverlay=overlay;
     this.fullscreenEsc=(event:KeyboardEvent)=>{
       if(event.key==='Escape'){event.preventDefault();this.exitOutputFullscreen();}
     };
@@ -1643,7 +1653,19 @@ export class MarimoView extends EditableFileView {
     saved.el.removeClass('is-fullscreen');
     if(saved.parent.isConnected)saved.parent.insertBefore(saved.el,saved.next);
     else saved.el.remove();
+    this.fullscreenOverlay?.remove();
+    this.fullscreenOverlay=null;
     if(this.fullscreenEsc){document.removeEventListener('keydown',this.fullscreenEsc,true);this.fullscreenEsc=null;}
+  }
+
+  /**
+   * The whole notebook over the whole screen: a presentation mode for the
+   * view itself. Esc (browser-native) leaves it.
+   */
+  toggleViewFullscreen(): void {
+    const el=this.containerEl;
+    if(document.fullscreenElement){void document.exitFullscreen();return;}
+    void el.requestFullscreen?.().catch(()=>new Notice(this.plugin.t('无法进入全屏。','Fullscreen is unavailable.')));
   }
 
   // ------------------------------------------------------------- variables panel

@@ -6,11 +6,13 @@
  * notebook keeps working without an embedded web view. Only widgets with a
  * faithful native counterpart are claimed; the rest are labelled, never faked.
  */
-import {extractUiElements, isSupportedWidget, labelText, optionLabels, tableRows, tableViewModel, tabsLabels, valueForWidget, type TableSort, type UiElement, type WidgetMarkup} from './ui-elements';
+import {chatMessages, extractUiElements, isSupportedWidget, labelText, optionLabels, tableRows, tableViewModel, tabsLabels, valueForWidget, type TableSort, type UiElement, type WidgetMarkup} from './ui-elements';
 
 export interface WidgetDeps {
   /** Push a value to the kernel; the view owns serialisation and error handling. */
   send(objectId: string, value: unknown): void;
+  /** Invoke a widget function RPC (chat's send_prompt); rejects on failure. */
+  invoke(namespace: string, functionName: string, args: Record<string, unknown>): Promise<unknown>;
   translate(zh: string, en: string): string;
   /** The host sanitizer: custom elements never survive it, so nested markup is sanitized here. */
   sanitize(html: string): DocumentFragment;
@@ -476,8 +478,118 @@ function buildWidget(element: UiElement, innerHtml: string, deps: WidgetDeps): H
       wrapper.append(note);
       break;
     }
+    case 'chat':
+    case 'chatbot': {
+      // mo.ui.chat talks through the send_prompt function RPC; the kernel
+      // streams the reply back as `send-ui-element-message` frames that the
+      // view forwards to the sink registered here.
+      const history = chatMessages(attrs.initialValue);
+      const log = node('div', 'marimo-native-chat-log');
+      const renderMessages = () => {
+        log.replaceChildren();
+        for (const message of history) {
+          const bubble = node('div', 'marimo-native-chat-bubble is-' + (message.role === 'user' ? 'user' : 'assistant'));
+          bubble.textContent = message.content;
+          log.append(bubble);
+        }
+        log.scrollTop = log.scrollHeight;
+      };
+      const note = node('div', 'marimo-native-widget-note');
+      const sendUser = (text: string) => {
+        if (!text) return;
+        history.push({role: 'user', content: text});
+        renderMessages();
+        const pending = node('div', 'marimo-native-chat-bubble is-assistant is-streaming');
+        pending.textContent = '…';
+        log.append(pending);
+        log.scrollTop = log.scrollHeight;
+        const request_id = 'chat-' + Math.random().toString(36).slice(2);
+        chatStreams.set(element.objectId, message => {
+          if (message.type !== 'stream_chunk') return;
+          const content = message.content as {type?: string;delta?: string}|null;
+          if (content && typeof content.delta === 'string') {
+            if (pending.textContent === '…') pending.textContent = '';
+            pending.textContent += content.delta;
+            log.scrollTop = log.scrollHeight;
+          }
+        });
+        deps.invoke(element.objectId, 'send_prompt', {
+          messages: history.map(message => ({...message, id: 'm-' + Math.random().toString(36).slice(2)})),
+          config: attrs.config && typeof attrs.config === 'object' ? attrs.config : {},
+          request_id,
+        }).then(() => {
+          const final = pending.textContent;
+          if (final) history.push({role: 'assistant', content: final});
+        }).catch(error => {
+          pending.remove();
+          note.textContent = String(error);
+        }).finally(() => {
+          chatStreams.delete(element.objectId);
+          pending.classList.remove('is-streaming');
+          renderMessages();
+        });
+      };
+      chatSinks.set(element.objectId, message => {
+        const payload = chatStreams.get(element.objectId);
+        if (payload) payload(message);
+      });
+      const prompts = Array.isArray(attrs.prompts) ? attrs.prompts.map(labelText).filter(Boolean) : [];
+      if (prompts.length) {
+        const chips = node('div', 'marimo-native-chat-prompts');
+        for (const prompt of prompts) {
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'marimo-native-chat-prompt';
+          chip.textContent = prompt;
+          chip.disabled = disabled;
+          chip.addEventListener('click', () => sendUser(prompt));
+          chips.append(chip);
+        }
+        wrapper.append(chips);
+      }
+      const row = node('div', 'marimo-native-chat-input');
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'marimo-native-chat-text';
+      input.placeholder = deps.translate('发消息…', 'Send a message…');
+      input.disabled = disabled;
+      const submit = document.createElement('button');
+      submit.type = 'button';
+      submit.className = 'marimo-native-chat-send';
+      submit.textContent = deps.translate('发送', 'Send');
+      submit.disabled = disabled;
+      const submitMessage = () => {
+        const text = input.value.trim();
+        if (!text) return;
+        input.value = '';
+        sendUser(text);
+      };
+      submit.addEventListener('click', submitMessage);
+      input.addEventListener('keydown', (event: Event) => {
+        if ((event as KeyboardEvent).key === 'Enter') {event.preventDefault(); submitMessage();}
+      });
+      row.append(input, submit);
+      wrapper.append(log, row, note);
+      renderMessages();
+      break;
+    }
     default:
       break;
   }
   return wrapper;
+}
+
+/** A chat sink receives one `send-ui-element-message` payload. */
+export type ChatSink = (message: {type?: string;content?: unknown;is_final?: boolean}) => void;
+
+/** Live chat widgets by element id, plus the current stream target. */
+const chatSinks = new Map<string, ChatSink>();
+const chatStreams = new Map<string, ChatSink>();
+
+/**
+ * Route a kernel element message to the chat widget that owns it. Safe to
+ * call for any element id: unknown ids are ignored.
+ */
+export function deliverChatMessage(objectId: string, message: {type?: string;content?: unknown;is_final?: boolean}): void {
+  chatSinks.get(objectId)?.(message);
 }

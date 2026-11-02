@@ -28,7 +28,7 @@ export interface UiElement {
 const SUPPORTED = new Set([
   'slider', 'range-slider', 'number', 'text', 'text-area', 'checkbox', 'switch',
   'radio', 'dropdown', 'multiselect', 'date', 'datetime', 'button', 'tabs',
-  'form', 'table',
+  'form', 'table', 'chatbot',
   // The converter itself is a React app; this frontend shows a read-only
   // structure preview, which is more useful than an "unsupported" line.
   'dataframe',
@@ -284,6 +284,40 @@ export function tableViewModel(
 export function tabsLabels(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   return raw.map(labelText);
+}
+
+/**
+ * `mo.ui.chat` history: the element value is `{messages: [...]}` (or a bare
+ * list), each message `{role, content}` where content is a string or an
+ * array of parts ({type:'text', text}). Junk degrades to an empty history.
+ */
+export function chatMessages(value: unknown): {role: string;content: string}[] {
+  const list = Array.isArray(value)
+    ? value
+    : (value && typeof value === 'object' && Array.isArray((value as {messages?: unknown}).messages))
+      ? (value as {messages: unknown[]}).messages
+      : [];
+  if (!Array.isArray(list)) return [];
+  const messages: {role: string;content: string}[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const record = item as {role?: unknown;content?: unknown};
+    const role = typeof record.role === 'string' ? record.role : '';
+    if (!role) continue;
+    const content = record.content;
+    if (typeof content === 'string') {
+      if (content) messages.push({role, content});
+      continue;
+    }
+    if (Array.isArray(content)) {
+      const text = content.map(part =>
+        part && typeof part === 'object' && typeof (part as {text?: unknown}).text === 'string'
+          ? (part as {text: string}).text
+          : '').join('');
+      if (text) messages.push({role, content: text});
+    }
+  }
+  return messages;
 }
 
 /**

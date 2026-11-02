@@ -142,6 +142,56 @@ class NativeBackendTest(unittest.IsolatedAsyncioTestCase):
         await self.session.close()
         self.assertIsNotNone(process.returncode)
 
+    async def test_function_rpc_streams_chat_and_returns_result(self):
+        """mo.ui.chat's send_prompt: streamed element messages + call result."""
+        del self.session
+        path = Path(self.folder.name) / "chat.py"
+        path.write_text("""import marimo
+__generated_with = "0.25.2"
+app = marimo.App()
+
+@app.cell
+def _():
+    import marimo as mo
+
+    def echo(messages, config):
+        return "Echo: " + str(messages[-1].content)
+    widget = mo.ui.chat(model=echo, prompts=["hi"])
+    widget
+    return (widget,)
+
+if __name__ == "__main__":
+    app.run()
+""")
+        spec = importlib.util.spec_from_file_location("native_backend", ROOT / "python/backend.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        session = module.NativeSession(path)
+        self.session = session
+        await session.start()
+        events = []
+        session.on_event = events.append
+        run = await session.run(session.cells)
+        del run
+        # The widget markup names the element id; the RPC namespace is that id.
+        import re as _re
+        match = _re.search(r"object-id='([^']+)'", events[-1].get("output", {}).get("data", "") if events else "", )
+        markup = ""
+        for event in events:
+            output = event.get("output")
+            if output and isinstance(output.get("data"), str) and "marimo-chat" in output["data"]:
+                markup = output["data"]
+        match = _re.search(r"object-id=\\?['\"]([^'\"\\\\]+)", markup)
+        self.assertIsNotNone(match, "chat widget markup must carry an object id")
+        namespace = match.group(1)
+        request = {"messages": [{"role": "user", "content": "marimo", "id": "m1"}], "config": {}, "request_id": "req-test-1"}
+        answer = await session.invoke_function(namespace, "send_prompt", request)
+        self.assertTrue(answer.get("found"), answer)
+        chunks = [event for event in events if event.get("op") == "send-ui-element-message"]
+        self.assertTrue(chunks, "the reply must stream as element messages")
+        final = [event for event in chunks if (event.get("message") or {}).get("is_final")]
+        self.assertTrue(final, "the stream must end with an is_final chunk")
+
     async def test_stdio_starts_with_ready_and_shuts_down_on_eof(self):
         import asyncio
         import json

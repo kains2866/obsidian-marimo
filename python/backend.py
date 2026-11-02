@@ -15,6 +15,7 @@ import stat
 import sys
 import urllib.parse
 import urllib.request
+import uuid
 import webbrowser
 from pathlib import Path
 
@@ -304,6 +305,55 @@ class NativeSession:
             raise ValueError("Unknown cell")
         return cell
 
+    async def invoke_function(self, namespace, function_name, args, publish=True):
+        """Invoke a UI element function RPC and stream its side effects.
+
+        `mo.ui.chat` talks through `send_prompt`: the kernel answers with
+        `function-call-result` and, while the model streams, with
+        `send-ui-element-message` frames. Those frames are forwarded to the
+        frontend as they arrive; the pump stops at the matching result.
+        """
+        if self.closed:
+            raise RuntimeError("Session stopped; reconnect before invoking")
+        if not isinstance(namespace, str) or not namespace.strip():
+            raise ValueError("A function namespace is required")
+        if not isinstance(function_name, str) or not function_name.strip():
+            raise ValueError("A function name is required")
+        if not isinstance(args, dict):
+            raise ValueError("Function args must be an object")
+        call_id = "fc-" + uuid.uuid4().hex
+        try:
+            async with self._cycle_lock:
+                if self.closed:
+                    raise RuntimeError("Session stopped; reconnect before invoking")
+                await asyncio.to_thread(
+                    self._request,
+                    "/api/kernel/function_call",
+                    {
+                        # The API takes camelCase, unlike the internal command.
+                        "functionCallId": call_id,
+                        "namespace": namespace,
+                        "functionName": function_name,
+                        "args": args,
+                    },
+                )
+                while True:
+                    event = await self._next_event()
+                    if publish:
+                        self.on_event(event)
+                    if event.get("op") == "function-call-result" and event.get("function_call_id") == call_id:
+                        return {
+                            "returnValue": event.get("return_value"),
+                            "status": event.get("status"),
+                            "found": event.get("found"),
+                        }
+                    if len(str(event)) > 4 * 1024 * 1024:
+                        raise RuntimeError("Function event limit reached")
+        except BaseException:
+            # The stream may have ended mid-cycle; keep the session usable by
+            # the next request only if it is still connected.
+            raise
+
     async def set_cell_config(self, cell_id, updates):
         """Apply a partial config to one cell and consume the cycle it triggers.
 
@@ -522,6 +572,17 @@ async def serve(filename):
                 await session.save(request["cells"])
             elif method == "ui":
                 await session.set_ui_element(request.get("objectId"), request.get("value"))
+            elif method == "function":
+                answer = await session.invoke_function(
+                    request.get("namespace", ""),
+                    request.get("functionName", ""),
+                    request.get("args") or {},
+                )
+                emit({"type": "result", "id": request_id,
+                      "returnValue": answer.get("returnValue"),
+                      "status": answer.get("status"),
+                      "found": answer.get("found")})
+                return
             elif method == "config":
                 await session.set_cell_config(request.get("cellId"), request.get("config"))
             elif method == "format":
@@ -564,7 +625,7 @@ async def serve(filename):
                 request = json.loads(line)
                 request_id = str(request["id"])
                 method = request["method"]
-                if method in ("run", "save", "delete", "ui", "config", "format", "complete"):
+                if method in ("run", "save", "delete", "ui", "config", "format", "complete", "function"):
                     running = asyncio.create_task(handle_run(request, request_id))
                     pending.add(running)
                     running.add_done_callback(pending.discard)

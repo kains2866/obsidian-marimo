@@ -229,3 +229,26 @@ test('a dataframe element is claimed for a read-only preview', () => {
   assert.equal(element.attrs.total, 120);
   assert.deepEqual((element.attrs.columns as unknown[]).length, 2);
 });
+
+// ---------------- chat element ----------------
+
+import {chatMessages} from '../src/ui-elements.ts';
+
+test('chatMessages reads the initial value and flattens text parts', () => {
+  const value = {messages: [
+    {id: 'a', role: 'user', content: '你好'},
+    {id: 'b', role: 'assistant', content: [{type: 'text', text: '在'}, {type: 'text', text: '的'}]},
+  ]};
+  assert.deepEqual(chatMessages(value), [
+    {role: 'user', content: '你好'},
+    {role: 'assistant', content: '在的'},
+  ]);
+});
+
+test('chatMessages tolerates lists, junk and empty values', () => {
+  assert.deepEqual(chatMessages([{role: 'user', content: 'hi'}]), [{role: 'user', content: 'hi'}]);
+  assert.deepEqual(chatMessages('nope'), []);
+  assert.deepEqual(chatMessages({messages: 'nope'}), []);
+  assert.deepEqual(chatMessages(null), []);
+  assert.deepEqual(chatMessages({messages: [{role: 'user'}]}), []);
+});

@@ -19,7 +19,7 @@ import {cellTemplate, type CellKind} from './cell-templates';
 import {canAdoptClaim, cellActions, connectionState, environmentLabel, normalizeCellStatus, shouldApplyResult, shouldApplyStopResult, showPrototypeInfo, statusView, toolbarAvailability, type CellStatus, type ConnectionState, type RunPhase} from './status';
 import {fileFromViewState} from './file-state';
 import {inspectSource} from './inspection';
-import {mountWidgets} from './widgets';
+import {mountWidgets, deliverChatMessage} from './widgets';
 import {extractUiElements} from './ui-elements';
 import inspectorSource from '../python/inspect_notebook.py';
 import type MarimoPlugin from './main';
@@ -606,6 +606,13 @@ export class MarimoView extends EditableFileView {
     // marimo announces an interrupt with its own event; the following
     // `completed-run` still reports `succeeded`, so order matters here.
     if(data.op==='interrupted') {this.runPhase='interrupted'; this.updateControls(); return;}
+    if(data.op==='send-ui-element-message') {
+      // Chat widgets stream their replies through this op; route by element id.
+      const objectId=typeof data.ui_element==='string'?data.ui_element:'';
+      const message=data.message;
+      if(objectId&&message&&typeof message==='object')deliverChatMessage(objectId,message as {type?:string;content?:unknown;is_final?:boolean});
+      return;
+    }
     if(data.op==='completed-run') {
       // `interrupted` must not read as a failure or as a successful run.
       if(data.outcome==='failed') this.runPhase='failed';
@@ -2179,6 +2186,10 @@ export class MarimoView extends EditableFileView {
       wrapper.appendChild(fragment);
       mountWidgets(wrapper, extracted.widgets, {
         send:(objectId,value)=>this.queueWidgetValue(objectId,value),
+        invoke:async(namespace,functionName,args)=>{
+          if(!this.backend)throw new Error(this.plugin.t('未连接内核','Kernel not connected'));
+          return this.backend.request('function',{namespace,functionName,args});
+        },
         translate:(zh,en)=>this.plugin.t(zh,en),
         sanitize:html=>sanitizeHTMLToDom(html),
       });

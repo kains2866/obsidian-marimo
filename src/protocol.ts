@@ -25,6 +25,10 @@ export interface RequestResult {
   prefixLength?: number;
   /** `open` answers whether a browser was actually launched. */
   opened?: boolean;
+  /** `function` answers with the RPC result envelope. */
+  returnValue?: unknown;
+  status?: {code?: string;title?: string;message?: string};
+  found?: boolean;
 }
 
 export function decodeMessage(line: string): BackendMessage {

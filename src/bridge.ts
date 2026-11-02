@@ -4,7 +4,7 @@ import {stopOwnedProcess} from './process-lifecycle';
 import {decodeMessage, type BackendMessage, type Cell, type RequestResult} from './protocol';
 import backendSource from '../python/backend.py';
 
-export type RequestMethod = 'run' | 'save' | 'create' | 'delete' | 'interrupt' | 'stdin' | 'ui' | 'config' | 'format' | 'complete' | 'open';
+export type RequestMethod = 'run' | 'save' | 'create' | 'delete' | 'interrupt' | 'stdin' | 'ui' | 'config' | 'format' | 'complete' | 'open' | 'function';
 
 export interface RequestPayload {
   cells?: Cell[];
@@ -24,6 +24,11 @@ export interface RequestPayload {
   codes?: Record<string, string>;
   /** Source up to the cursor for completion. */
   document?: string;
+  /** Widget function RPC: namespace (element id) and function name. */
+  namespace?: string;
+  functionName?: string;
+  /** Arguments for a function RPC. */
+  args?: Record<string, unknown>;
 }
 
 export class Backend {
@@ -81,7 +86,7 @@ export class Backend {
     const id = String(++this.serial);
     // Runs, saves, deletes, widget and config writes wait for a whole reactive
     // cycle; the rest must answer fast.
-    const long = method === 'run' || method === 'save' || method === 'delete' || method === 'ui' || method === 'config';
+    const long = method === 'run' || method === 'save' || method === 'delete' || method === 'ui' || method === 'config' || method === 'function';
     const frame: Record<string, unknown> = {id, method};
     if (method === 'run' || method === 'save') frame.cells = payload.cells ?? [];
     else if (method === 'create') frame.code = payload.code ?? '';
@@ -91,6 +96,7 @@ export class Backend {
     else if (method === 'config') {frame.cellId = payload.cellId ?? ''; frame.config = payload.config ?? {};}
     else if (method === 'format') frame.codes = payload.codes ?? {};
     else if (method === 'complete') {frame.cellId = payload.cellId ?? ''; frame.document = payload.document ?? '';}
+    else if (method === 'function') {frame.namespace = payload.namespace ?? ''; frame.functionName = payload.functionName ?? ''; frame.args = payload.args ?? {};}
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {this.pending.delete(id); reject(new Error(`${method} timed out; session stopped`)); this.close();}, long ? 120_000 : 20_000);
       this.pending.set(id, {resolve, reject, timer});

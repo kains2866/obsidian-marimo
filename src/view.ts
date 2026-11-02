@@ -156,9 +156,9 @@ export class MarimoView extends EditableFileView {
     // Native marimo keeps a spinner in the top bar while connecting and
     // swaps Run-all for one during a notebook run; mirror both.
     this.connectButton.toggleClass('is-busy',this.connecting);
-    setIcon(this.connectButton,this.connecting?'loader-2':'plug-zap');
+    setIcon(this.iconHolder(this.connectButton),this.connecting?'loader-2':'plug-zap');
     this.runButton.toggleClass('is-busy',this.runPhase==='running');
-    setIcon(this.runButton,this.runPhase==='running'?'loader-2':'play');
+    setIcon(this.iconHolder(this.runButton),this.runPhase==='running'?'loader-2':'play');
     this.runButton.disabled = !available.runAll;
     this.saveButton.disabled = !available.save;
     this.stopButton.disabled = !available.stop;
@@ -380,11 +380,20 @@ export class MarimoView extends EditableFileView {
     button.dataset.action = action;
     button.setAttr('aria-label', label);
     button.setAttr('title', label);
-    setIcon(button, icon);
+    // Obsidian's setIcon only swaps the element's first child and appends the
+    // new icon last: with a text span present the span gets eaten on the next
+    // swap and icons pile up. Icons therefore live in their own holder span,
+    // and every later swap targets that holder, never the button itself.
+    const holder = button.createSpan({cls:'marimo-native-action-icon'});
+    setIcon(holder, icon);
     if (withText) button.createSpan({text:label});
     else button.addClass('is-icon-only');
     button.onclick = onClick;
     return button;
+  }
+
+  private iconHolder(button: HTMLButtonElement): HTMLElement {
+    return button.querySelector<HTMLElement>('.marimo-native-action-icon') ?? button;
   }
 
   private showSource(source:string, caption:string):void {

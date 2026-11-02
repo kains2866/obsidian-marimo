@@ -72,6 +72,57 @@ export function renderContext(context: AIContext): string {
   return parts.join('\n\n');
 }
 
+/**
+ * Pick the cells a prompt should see: the focus cell whole and first, then
+ * the cells that share its variables, then nearest neighbours until the
+ * budget is spent. Without a focus the old tail-of-notebook behaviour keeps
+ * large notebooks working.
+ */
+export function renderFocusedContext(
+  cells: {id: string;code: string}[],
+  focusId: string | null,
+  relatedIds: Set<string>,
+  limit = 6000,
+): string {
+  if (focusId === null) {
+    return cells.map(cell => cell.code).join('\n\n').slice(-limit);
+  }
+  const focusIndex = cells.findIndex(cell => cell.id === focusId);
+  if (focusIndex < 0) return cells.map(cell => cell.code).join('\n\n').slice(-limit);
+  const focus = cells[focusIndex]!;
+  const related = cells.filter(cell => cell.id !== focusId && relatedIds.has(cell.id));
+  const chosen: {id: string;code: string}[] = [focus];
+  let budget = limit - focus.code.length;
+  // Nearest neighbours first, so the immediate surroundings survive a tight
+  // budget even when many cells are related.
+  const rest = cells.filter(cell => cell.id !== focusId && !relatedIds.has(cell.id));
+  const neighbours: typeof rest = [];
+  for (let offset = 1; neighbours.length < rest.length; offset++) {
+    const before = cells[focusIndex - offset];
+    if (before && !relatedIds.has(before.id) && before.id !== focusId) neighbours.push(before);
+    const after = cells[focusIndex + offset];
+    if (after && !relatedIds.has(after.id) && after.id !== focusId) neighbours.push(after);
+  }
+  for (const cell of [...related, ...neighbours]) {
+    if (budget - cell.code.length < 0 && chosen.length > 1) break;
+    if (chosen.some(picked => picked.id === cell.id)) continue;
+    chosen.push(cell);
+    budget -= cell.code.length;
+  }
+  // Notebook order, focus cell first, keeps the text readable for the model.
+  const ordered = chosen.filter(cell => cell.id === focusId)
+    .concat(chosen.filter(cell => cell.id !== focusId).sort((a, b) =>
+      cells.findIndex(cell => cell.id === a.id) - cells.findIndex(cell => cell.id === b.id)));
+  const parts: string[] = [];
+  let used = 0;
+  for (const cell of ordered) {
+    if (parts.length && used + cell.code.length > limit) break;
+    parts.push(cell.code);
+    used += cell.code.length;
+  }
+  return parts.join('\n\n');
+}
+
 /** One SSE line → streamed text, or null when the line carries no content. */
 export function extractDelta(line: string): string | null {
   if (!line.startsWith('data:')) return null;

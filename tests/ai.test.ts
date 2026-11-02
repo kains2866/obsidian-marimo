@@ -147,3 +147,40 @@ test('inline completion keeps a meaningful leading space', async () => {
   const {impl} = stubFetch({choices: [{message: {content: ' * 3'}}]});
   assert.equal(await fetchInlineCompletion(CONFIG, 'y = x', '', impl), ' * 3');
 });
+
+// ---------------- focused context ----------------
+
+import {renderFocusedContext} from '../src/ai.ts';
+
+const CELLS = [
+  {id: 'a', code: 'import marimo as mo'},
+  {id: 'b', code: 'x = 4'},
+  {id: 'c', code: 'result = x * 3'},
+  {id: 'd', code: 'plot(result)'},
+  {id: 'e', code: 'unrelated = 1'},
+];
+
+test('focused context puts the focus cell first, then related cells in order', () => {
+  const text = renderFocusedContext(CELLS, 'c', new Set(['b', 'd']), 33);
+  const order = [text.indexOf('result = x * 3'), text.indexOf('x = 4'), text.indexOf('plot(result)')];
+  assert.ok(order[0] >= 0 && order[0] < order[1] && order[1] < order[2], text);
+  assert.ok(!text.includes('unrelated'), text);
+});
+
+test('focused context fills leftover budget with nearest neighbours', () => {
+  const text = renderFocusedContext(CELLS, 'c', new Set(), 10_000);
+  assert.ok(text.includes('import marimo as mo'), text);
+  assert.ok(text.includes('x = 4'), text);
+});
+
+test('focused context respects the character budget, focus cell always whole', () => {
+  const big = CELLS.map(cell => ({...cell, code: cell.id.repeat(200)}));
+  const text = renderFocusedContext(big, 'c', new Set(['b']), 450);
+  assert.ok(text.length <= 450 + 20, String(text.length));
+  assert.ok(text.startsWith('c'.repeat(200)), text.slice(0, 10));
+});
+
+test('focused context without a focus keeps the tail of the notebook', () => {
+  const text = renderFocusedContext(CELLS, null, new Set(), 40);
+  assert.ok(text.endsWith('unrelated = 1'.slice(0, 40).trim()) || text.includes('unrelated'), text);
+});

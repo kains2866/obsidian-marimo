@@ -12,7 +12,7 @@ import {nativeHighlight} from './editor-theme';
 import {isErrorOutput, isStdinOutput, safeOutput, type BackendMessage, type Cell} from './protocol';
 import {isAllowedImageSource, normalizeLinkpath, adaptMarimoTex, isBlockedAttribute, isBlockedElement} from './output-policy';
 import {encodeMarkdownCell, outlineEntries, parseMarkdownCell} from './markdown-cell';
-import {generateCellCode, refactorCellCode, fetchInlineCompletion, type AIContext} from './ai';
+import {generateCellCode, refactorCellCode, fetchInlineCompletion, renderFocusedContext, type AIContext} from './ai';
 import {inlineSuggestion} from './inline-complete';
 import {renderPlotly, renderVega} from './chart-embed';
 import {cellTemplate, type CellKind} from './cell-templates';
@@ -1509,11 +1509,23 @@ export class MarimoView extends EditableFileView {
    * The chat panel reuses it for every turn.
    */
   aiContext(excludeCellId?: string): AIContext {
-    const code=this.cells
-      .filter(cell=>cell.id!==excludeCellId)
-      .map(cell=>this.editors.get(cell.id)?.view.state.doc.toString()??cell.code)
-      .join('\n\n')
-      .slice(-6000);
+    // Focus on the target cell and whatever shares its variables; a full
+    // notebook dump wastes the prompt on cells the model cannot use.
+    const focusId=excludeCellId??this.selectedId??null;
+    const relatedIds=new Set<string>();
+    if(focusId) {
+      const deps=this.currentCellDeps();
+      const target=deps.get(focusId);
+      if(target) {
+        const shared=new Set([...target.outputs,...target.inputs]);
+        for(const [cellId,entry] of deps) {
+          if(cellId===focusId)continue;
+          if(entry.outputs.some(name=>shared.has(name))||entry.inputs.some(name=>shared.has(name)))relatedIds.add(cellId);
+        }
+      }
+    }
+    const cells=this.cells.map(cell=>({id:cell.id,code:this.editors.get(cell.id)?.view.state.doc.toString()??cell.code}));
+    const code=renderFocusedContext(cells,focusId,relatedIds);
     return {code,variables:this.currentVariables().map(({name,datatype,value})=>({name,datatype,value}))};
   }
 

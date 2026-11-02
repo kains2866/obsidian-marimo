@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {encodeMarkdownCell, outlineEntries, parseMarkdownCell} from '../src/markdown-cell.ts';
+import {encodeMarkdownCell, headingLevel, outlineEntries, parseMarkdownCell} from '../src/markdown-cell.ts';
 import {MARKDOWN_CELL_TEMPLATE} from '../src/cell-templates.ts';
 
 test('the new-cell markdown template round-trips as a markdown row', () => {
@@ -193,4 +193,13 @@ test('outlineEntries skips headings inside fenced code', () => {
 test('outlineEntries ignores close fences of the wrong marker', () => {
   const entries = outlineEntries('# A\n\n```\nstill code ~~~\n```\n\n## B');
   assert.deepEqual(entries, [{level: 1, text: 'A'}, {level: 2, text: 'B'}]);
+});
+
+test('headingLevel reads the marker length of a heading line', () => {
+  assert.equal(headingLevel('# One'), 1);
+  assert.equal(headingLevel('### Three'), 3);
+  assert.equal(headingLevel('###### Six'), 6);
+  assert.equal(headingLevel('Write **markdown** here.'), 0);
+  assert.equal(headingLevel('#NoSpace'), 0);
+  assert.equal(headingLevel(''), 0);
 });

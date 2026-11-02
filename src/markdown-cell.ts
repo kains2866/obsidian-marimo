@@ -242,3 +242,13 @@ export function outlineEntries(markdown: string): OutlineEntry[] {
   }
   return entries;
 }
+
+/**
+ * The heading level of a single markdown line, 0 when the line is not a
+ * heading. Used by the toolbar heading button so its icon mirrors what the
+ * cursor sits on instead of advertising a fixed level.
+ */
+export function headingLevel(line: string): number {
+  const match = line.match(/^#{1,6}\s/);
+  return match ? match[0]!.trim().length : 0;
+}

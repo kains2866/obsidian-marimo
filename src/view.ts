@@ -11,7 +11,7 @@ import {cellPresentation, mergeCellConfig, readCellConfig, wireConfig, type Cell
 import {nativeHighlight} from './editor-theme';
 import {isErrorOutput, isStdinOutput, safeOutput, type BackendMessage, type Cell} from './protocol';
 import {isAllowedImageSource, normalizeLinkpath, adaptMarimoTex, isBlockedAttribute, isBlockedElement} from './output-policy';
-import {encodeMarkdownCell, outlineEntries, parseMarkdownCell} from './markdown-cell';
+import {encodeMarkdownCell, headingLevel, outlineEntries, parseMarkdownCell} from './markdown-cell';
 import {generateCellCode, refactorCellCode, fetchInlineCompletion, renderFocusedContext, type AIContext} from './ai';
 import {inlineSuggestion} from './inline-complete';
 import {renderPlotly, renderVega} from './chart-embed';
@@ -979,7 +979,9 @@ export class MarimoView extends EditableFileView {
     tool('md-bold','bold',this.plugin.t('加粗','Bold'),()=>wrap('**','**'));
     tool('md-italic','italic',this.plugin.t('斜体','Italic'),()=>wrap('*','*'));
     tool('md-code','code',this.plugin.t('代码','Code'),()=>wrap('`','`'));
-    tool('md-heading','heading-2',this.plugin.t('标题','Heading'),()=>this.cycleMarkdownLines(cellId,'## '));
+    const heading=tool('md-heading','heading-1',this.plugin.t('标题','Heading'),()=>this.cycleMarkdownHeading(cellId,heading));
+    const editor=this.editors.get(cellId)?.view;
+    if(editor)this.setHeadingIcon(heading,headingLevel(editor.state.doc.lineAt(editor.state.selection.main.from).text));
     tool('md-link','link',this.plugin.t('链接','Link'),()=>wrap('[',']()'));
     tool('md-list','list',this.plugin.t('列表','List'),()=>this.cycleMarkdownLines(cellId,'- '));
   }
@@ -1030,6 +1032,35 @@ export class MarimoView extends EditableFileView {
       return {from:line.from,to:line.to,insert:marked?stripped:prefix+stripped};
     })});
     editor.focus();
+  }
+
+  /**
+   * Cycle the heading level none → H1 → H2 → H3 → none over the selection
+   * and mirror the new level in the toolbar icon, so the button reads like
+   * the native toolbar instead of advertising one fixed level.
+   */
+  private cycleMarkdownHeading(cellId:string,button:HTMLButtonElement): void {
+    const editor=this.editors.get(cellId)?.view;
+    if(!editor)return;
+    const sel=editor.state.selection.main;
+    const first=editor.state.doc.lineAt(sel.from).number;
+    const last=editor.state.doc.lineAt(sel.to).number;
+    const lines=Array.from({length:last-first+1},(_,index)=>editor.state.doc.line(first+index));
+    const level=headingLevel(lines[0]!.text);
+    const next=level>=3?0:level+1;
+    const prefix=next===0?'':'#'.repeat(next)+' ';
+    editor.dispatch({changes:lines.map(line=>({
+      from:line.from,
+      to:line.to,
+      insert:prefix+line.text.replace(/^#{1,6}\s+/,''),
+    }))});
+    this.setHeadingIcon(button,next);
+    editor.focus();
+  }
+
+  /** The heading icon follows the level; a plain heading marks "no level". */
+  private setHeadingIcon(button:HTMLButtonElement,level:number): void {
+    setIcon(button,level>=1&&level<=3?`heading-${level}`:'heading');
   }
 
   /**

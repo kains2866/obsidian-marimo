@@ -7,6 +7,7 @@ import {RecoveryStore, normalizePython} from './recovery';
 import {MarimoView, VIEW_TYPE} from './view';
 import {MarimoOutlineView, VIEW_TYPE_OUTLINE} from './outline-view';
 import {MarimoVariablesView, VIEW_TYPE_VARIABLES} from './variables-view';
+import {MarimoChatView, VIEW_TYPE_CHAT} from './chat-view';
 import {NOTEBOOK_TEMPLATE, nextNotebookPath} from './notebook-file';
 import type {Cell} from './protocol';
 import {WriterLocks,type WriterLease} from './writer-lock';
@@ -29,6 +30,15 @@ export default class MarimoPlugin extends Plugin {
     // Outline view, and follows the active notebook automatically.
     this.registerView(VIEW_TYPE_OUTLINE,leaf=>new MarimoOutlineView(leaf,this));
     this.registerView(VIEW_TYPE_VARIABLES,leaf=>new MarimoVariablesView(leaf,this));
+    // marimo's chat panel, docked in Obsidian's sidebar.
+    this.registerView(VIEW_TYPE_CHAT,leaf=>new MarimoChatView(leaf,this));
+    this.addCommand({id:'open-marimo-chat',name:this.t('打开 marimo AI 对话','Open marimo AI chat'),callback:()=>{
+      const existing=this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT)[0];
+      const leaf=existing??this.app.workspace.getRightLeaf(false);
+      if(!leaf)return;
+      const done=existing?Promise.resolve():leaf.setViewState({type:VIEW_TYPE_CHAT,active:true});
+      void done.then(()=>this.app.workspace.revealLeaf(leaf));
+    }});
     this.addCommand({id:'open-marimo-outline',name:this.t('打开 marimo 大纲','Open marimo outline'),callback:()=>{
       // Reuse the pane if it exists; a second command press must not stack
       // another empty leaf into the right dock.
@@ -56,6 +66,12 @@ export default class MarimoPlugin extends Plugin {
       const view=this.app.workspace.getActiveViewOfType(MarimoView);
       if(!view) {new Notice(this.t('请先打开一个 marimo notebook。','Open a marimo notebook first.'));return;}
       view.startAI();
+    }});
+    this.addCommand({id:'marimo-refactor-with-ai',name:this.t('用 AI 重构当前单元格','Refactor current cell with AI'),callback:()=>{
+      const view=this.app.workspace.getActiveViewOfType(MarimoView);
+      if(!view) {new Notice(this.t('请先打开一个 marimo notebook。','Open a marimo notebook first.'));return;}
+      if(!view.selectedId) {new Notice(this.t('请先选中一个单元格。','Select a cell first.'));return;}
+      view.promptRefactor(view.selectedId);
     }});
     if(this.settings.associatePython) {      try{this.registerExtensions(['py'],VIEW_TYPE);this.associationStatus=this.t('点击 Python 文件会在此插件中打开，普通脚本只读显示。','Clicking Python files opens this view; ordinary scripts are shown read-only.');}
       catch{this.associationStatus=this.t('Python 文件已由其他插件接管，保留原关联；可使用右键菜单或命令打开。','Another plugin handles Python files. Its association is preserved; use the context menu or command.');}

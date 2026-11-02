@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import { decodeAttribute, extractUiElements, isSupportedWidget, labelText, optionLabels, readUiElement, tableRows, tabsLabels, valueForWidget } from '../src/ui-elements.ts';
+import { decodeAttribute, extractUiElements, isSupportedWidget, labelText, optionLabels, readUiElement, tableRows, tableViewModel, tabsLabels, valueForWidget } from '../src/ui-elements.ts';
 
 /**
  * Fixtures are the raw attribute text marimo 0.25.2 emits (captured from a real
@@ -188,4 +188,30 @@ test('table selection writes back row indices only', () => {
   assert.deepEqual(valueForWidget('table', []), []);
   assert.deepEqual(valueForWidget('table', null), []);
   assert.deepEqual(valueForWidget('table', ['x', 1.5]), [1.5].filter(Number.isInteger));
+});
+
+test('table search and sort keep original row indices', () => {
+  const rows = [
+    {name: 'banana', qty: 2},
+    {name: 'apple', qty: 10},
+    {name: 'Cherry', qty: 7},
+  ];
+  // Filter by text: the surviving rows carry their original indices.
+  assert.deepEqual(tableViewModel(rows, 'an', null, 50).rows.map(r => [r.index, r.cells.name]), [[0, 'banana']]);
+  // Sort ascending by number: 2, 7, 10 with original indices 0, 2, 1.
+  assert.deepEqual(tableViewModel(rows, '', {column: 'qty', direction: 'asc'}, 50).rows.map(r => r.index), [0, 2, 1]);
+  // Descending flips it.
+  assert.deepEqual(tableViewModel(rows, '', {column: 'qty', direction: 'desc'}, 50).rows.map(r => r.index), [1, 2, 0]);
+  // Text sort is case-insensitive.
+  assert.deepEqual(tableViewModel(rows, '', {column: 'name', direction: 'asc'}, 50).rows.map(r => r.cells.name), ['apple', 'banana', 'Cherry']);
+  // Search composes with sort: 'e' matches apple (10) and Cherry (7).
+  const both = tableViewModel(rows, 'e', {column: 'qty', direction: 'desc'}, 50);
+  assert.deepEqual(both.rows.map(r => r.cells.name), ['apple', 'Cherry']);
+  // Unknown column or empty rows degrade to the identity order.
+  assert.deepEqual(tableViewModel(rows, '', {column: 'nope', direction: 'asc'}, 50).rows.map(r => r.index), [0, 1, 2]);
+  assert.deepEqual(tableViewModel([], 'x', null, 50).columns, []);
+  // The limit cuts the *view*, not the index mapping.
+  const limited = tableViewModel(rows, '', null, 2);
+  assert.equal(limited.rows.length, 2);
+  assert.deepEqual(limited.rows.map(r => r.index), [0, 1]);
 });

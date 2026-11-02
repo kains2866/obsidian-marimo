@@ -1,4 +1,4 @@
-import {EditableFileView, MarkdownRenderer, Modal, Notice, Platform, Scope, sanitizeHTMLToDom, setIcon, type WorkspaceLeaf, type TFile, type ViewStateResult} from 'obsidian';
+import {EditableFileView, MarkdownRenderer, Modal, Notice, Platform, Scope, sanitizeHTMLToDom, setIcon, type Workspace, type WorkspaceLeaf, type TFile, type ViewStateResult} from 'obsidian';
 import {EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter} from '@codemirror/view';
 import {Compartment, EditorState} from '@codemirror/state';
 import {python} from '@codemirror/lang-python';
@@ -12,7 +12,7 @@ import {nativeHighlight} from './editor-theme';
 import {isErrorOutput, isStdinOutput, safeOutput, type BackendMessage, type Cell} from './protocol';
 import {isAllowedImageSource, normalizeLinkpath, adaptMarimoTex, isBlockedAttribute, isBlockedElement} from './output-policy';
 import {encodeMarkdownCell, outlineEntries, parseMarkdownCell} from './markdown-cell';
-import {generateCellCode} from './ai';
+import {generateCellCode, refactorCellCode, type AIContext} from './ai';
 import {renderPlotly, renderVega} from './chart-embed';
 import {cellTemplate, type CellKind} from './cell-templates';
 import {canAdoptClaim, cellActions, connectionState, environmentLabel, normalizeCellStatus, shouldApplyResult, shouldApplyStopResult, showPrototypeInfo, statusView, toolbarAvailability, type CellStatus, type ConnectionState, type RunPhase} from './status';
@@ -72,7 +72,9 @@ export class MarimoView extends EditableFileView {
   private changedSinceRun = false;
   private stopping = false;
   private hasDraft = false;
-  private selectedId: string | null = null;
+  selectedId: string | null = null;
+  /** When this view was last the active leaf; sidebar panels follow the latest. */
+  lastActive = 0;
   private operation = 0;
   /** Latest unsent value per widget, so a fast drag cannot pile up cycles. */
   private widgetPending = new Map<string, unknown>();
@@ -269,6 +271,8 @@ export class MarimoView extends EditableFileView {
   // ---------------------------------------------------------------- shell
 
   async onOpen(): Promise<void> {
+    this.lastActive=Date.now();
+    this.registerEvent(this.app.workspace.on('active-leaf-change',leaf=>{if(leaf?.view===this)this.lastActive=Date.now();}));
     this.contentEl.empty();this.contentEl.addClass('marimo-native');
     this.toolbar = this.contentEl.createDiv({cls:'marimo-native-toolbar'});
     this.toolbar.setAttribute('role','toolbar');
@@ -326,13 +330,36 @@ export class MarimoView extends EditableFileView {
       void this.runCell(cellId);
       return false;
     });
+    // marimo's rewrite-a-cell shortcut, bound to the same gesture.
+    scope.register(['Mod','Shift'],'E',()=>{
+      if(this.closed||this.app.workspace.getActiveViewOfType(MarimoView)!==this)return true;
+      const cellId=document.activeElement?.closest<HTMLElement>('.marimo-native-cell')?.dataset.cellId;
+      if(!cellId)return true;
+      this.promptRefactor(cellId);
+      return false;
+    });
     this.app.keymap.pushScope(scope);
     this.keyScope=scope;
     this.updateControls();
   }
 
-  private createAction(action:string, label:string, icon:string, withText:boolean, onClick:()=>void):HTMLButtonElement {
-    const button = this.toolbar.createEl('button',{cls:'marimo-native-action'});
+  /**
+   * The notebook view a sidebar panel (outline, variables, chat) should follow
+   * right now: the active one, else the most recently active. Picking the
+   * first leaf would latch onto whichever notebook happened to open first.
+   */
+  static mostRecent(workspace: Workspace): MarimoView|null {
+    const active=workspace.getActiveViewOfType(MarimoView);
+    if(active&&!active.isClosed())return active;
+    let best:MarimoView|null=null;
+    for(const leaf of workspace.getLeavesOfType(VIEW_TYPE)) {
+      const view=leaf.view;
+      if(view instanceof MarimoView&&!view.isClosed()&&(!best||view.lastActive>best.lastActive))best=view;
+    }
+    return best;
+  }
+
+  private createAction(action:string, label:string, icon:string, withText:boolean, onClick:()=>void):HTMLButtonElement {    const button = this.toolbar.createEl('button',{cls:'marimo-native-action'});
     button.dataset.action = action;
     button.setAttr('aria-label', label);
     button.setAttr('title', label);
@@ -1095,6 +1122,11 @@ export class MarimoView extends EditableFileView {
     }
     item('cell-split','split',this.plugin.t('拆分单元格','Split cell'),()=>void this.splitCellAt(cellId));
     item('cell-format','sparkles',this.plugin.t('格式化此单元格','Format cell'),()=>void this.formatCells(cellId));
+    // marimo's Ctrl/Cmd-Shift-E: rewrite this cell from a prompt. Hidden until
+    // a provider is set, like the generate entry in the insert menu.
+    if(this.plugin.settings.aiBaseUrl&&this.plugin.settings.aiApiKey) {
+      item('cell-ai','bot',this.plugin.t('AI 重构此单元格','Refactor with AI'),()=>this.promptRefactor(cellId),this.kbdLabel('Mod+Shift+E'));
+    }
     item('cell-clear','eraser',this.plugin.t('清除输出','Clear output'),()=>this.clearCellOutput(cellId));
     separator();
     item('hide-code',config.hideCode?'eye':'eye-off',config.hideCode?this.plugin.t('显示代码','Show code'):this.plugin.t('隐藏代码','Hide code'),()=>void this.setCellConfig(cellId,{hideCode:!config.hideCode}));
@@ -1400,6 +1432,20 @@ export class MarimoView extends EditableFileView {
     input.focus();
   }
 
+  /**
+   * What the model sees: the other cells' source plus the variables currently
+   * in memory (name, type, value preview), so it can reuse existing data.
+   * The chat panel reuses it for every turn.
+   */
+  aiContext(excludeCellId?: string): AIContext {
+    const code=this.cells
+      .filter(cell=>cell.id!==excludeCellId)
+      .map(cell=>this.editors.get(cell.id)?.view.state.doc.toString()??cell.code)
+      .join('\n\n')
+      .slice(-6000);
+    return {code,variables:this.currentVariables().map(({name,datatype,value})=>({name,datatype,value}))};
+  }
+
   /** Create the cell, ask the configured endpoint, fill and run it. */
   async generateWithAI(afterId:string|null, prompt:string): Promise<void> {
     const settings=this.plugin.settings;
@@ -1413,18 +1459,80 @@ export class MarimoView extends EditableFileView {
     if(!editor)return;
     const notice=new Notice(this.plugin.t('AI 生成中…','Generating with AI…'),0);
     try {
-      const context=this.cells
-        .map(cell=>this.editors.get(cell.id)?.view.state.doc.toString()??cell.code)
-        .join('\n\n')
-        .slice(-4000);
+      const context=this.aiContext(id);
+      // The answer streams into the editor as it arrives; the complete,
+      // fence-stripped code replaces the raw stream once it is all here.
+      let streamed='';
       const code=await generateCellCode(
         {baseUrl:settings.aiBaseUrl,apiKey:settings.aiApiKey,model:settings.aiModel||'gpt-4o-mini'},
-        prompt,context);
+        prompt,context,{
+          onDelta:chunk=>{
+            streamed+=chunk;
+            editor.dispatch({changes:{from:0,to:editor.state.doc.length,insert:streamed}});
+          },
+        });
       editor.dispatch({changes:{from:0,to:editor.state.doc.length,insert:code}});
       notice.hide();
       await this.runCell(id);
     } catch(error) {
       notice.hide();
+      // A half-written stream must not pass for a finished cell.
+      editor.dispatch({changes:{from:0,to:editor.state.doc.length,insert:''}});
+      new Notice(String(error));
+    }
+  }
+
+  /** The cell menu's "Refactor with AI": describe the change, keep the cell. */
+  promptRefactor(cellId:string): void {
+    if(!this.plugin.settings.aiBaseUrl||!this.plugin.settings.aiApiKey) {
+      new Notice(this.plugin.t('尚未配置 AI 端点与密钥：设置 → Marimo Notebook → AI。','No AI endpoint or key yet: Settings → Marimo Notebook → AI.'));
+      return;
+    }
+    const modal=new Modal(this.app);
+    modal.contentEl.addClass('marimo-ai-prompt');
+    modal.contentEl.createDiv({cls:'marimo-ai-hint',text:this.plugin.t('描述要如何改写这个单元格，AI 将替换它的代码并重新运行。','Describe how to rewrite this cell; its code is replaced and rerun.')});
+    const input=modal.contentEl.createEl('textarea');
+    input.placeholder=this.plugin.t('例如：加上输入校验，负数时报错','e.g. add input validation that raises on negatives');
+    const actions=modal.contentEl.createDiv({cls:'marimo-ai-actions'});
+    const go=actions.createEl('button',{text:this.plugin.t('改写','Rewrite'),cls:'mod-cta'});
+    go.onclick=()=>{
+      const instruction=input.value.trim();
+      if(!instruction)return;
+      modal.close();
+      void this.refactorWithAI(cellId,instruction);
+    };
+    input.addEventListener('keydown',event=>{
+      if(event.key==='Enter'&&(event.ctrlKey||event.metaKey))go.click();
+    });
+    modal.open();
+    input.focus();
+  }
+
+  /** Replace one cell's code with the model's rewrite and rerun it. */
+  async refactorWithAI(cellId:string, instruction:string): Promise<void> {
+    const settings=this.plugin.settings;
+    if(!settings.aiBaseUrl||!settings.aiApiKey) return;
+    const editor=this.editors.get(cellId)?.view;
+    if(!editor)return;
+    const original=editor.state.doc.toString();
+    const notice=new Notice(this.plugin.t('AI 改写中…','Rewriting with AI…'),0);
+    try {
+      const context=this.aiContext(cellId);
+      let streamed='';
+      const code=await refactorCellCode(
+        {baseUrl:settings.aiBaseUrl,apiKey:settings.aiApiKey,model:settings.aiModel||'gpt-4o-mini'},
+        instruction,original,context,{
+          onDelta:chunk=>{
+            streamed+=chunk;
+            editor.dispatch({changes:{from:0,to:editor.state.doc.length,insert:streamed}});
+          },
+        });
+      editor.dispatch({changes:{from:0,to:editor.state.doc.length,insert:code}});
+      notice.hide();
+      await this.runCell(cellId);
+    } catch(error) {
+      notice.hide();
+      editor.dispatch({changes:{from:0,to:editor.state.doc.length,insert:original}});
       new Notice(String(error));
     }
   }
@@ -1452,6 +1560,19 @@ export class MarimoView extends EditableFileView {
   revealCell(cellId:string): void {
     this.rowFor(cellId)?.scrollIntoView({block:'start',behavior:'smooth'});
     this.selectCell(cellId);
+  }
+
+  /**
+   * The chat panel's "insert as cell": append the code at the end of the
+   * notebook and run it, like the native panel's insert button does.
+   */
+  async insertGeneratedCell(code:string): Promise<void> {
+    const id=await this.insertAfter(null,'python');
+    if(!id)return;
+    const editor=this.editors.get(id)?.view;
+    if(!editor)return;
+    editor.dispatch({changes:{from:0,to:editor.state.doc.length,insert:code}});
+    await this.runCell(id);
   }
 
   // ---------------------------------------------------------- fullscreen output

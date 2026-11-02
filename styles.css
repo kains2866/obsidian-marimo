@@ -899,3 +899,87 @@
   max-width: 100%;
   height: auto;
 }
+
+/* ------------------------------------------------------------- ai chat pane */
+
+.marimo-chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 8px;
+  gap: 8px;
+}
+.marimo-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.marimo-chat-context {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.marimo-chat-log {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 2px;
+}
+.marimo-chat-bubble {
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-ui-small);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.marimo-chat-user {
+  align-self: flex-end;
+  background: var(--background-modifier-hover);
+}
+.marimo-chat-assistant {
+  align-self: stretch;
+  background: var(--background-secondary);
+}
+.marimo-chat-bubble.is-live {
+  opacity: 0.85;
+}
+.marimo-chat-body > :first-child { margin-top: 0; }
+.marimo-chat-body > :last-child { margin-bottom: 0; }
+.marimo-chat-insert {
+  margin-top: 6px;
+  font-size: var(--font-ui-smaller);
+}
+.marimo-chat-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.marimo-chat-composer textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 56px;
+}
+.marimo-chat-composer button {
+  align-self: flex-end;
+}
+
+/* -------------------------------------------------- table search & sort */
+
+.marimo-native-widget-table-search {
+  width: 100%;
+  max-width: 240px;
+  margin-bottom: 4px;
+  font-size: var(--font-ui-small);
+}
+.marimo-native-widget-table th.is-sortable { cursor: pointer; user-select: none; }
+.marimo-native-widget-table th.is-sortable:hover { color: var(--text-normal); }
+.marimo-native-widget-sort {
+  color: var(--interactive-accent);
+  font-size: 0.8em;
+  margin-left: 2px;
+}

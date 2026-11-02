@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {generateCellCode, stripFences} from '../src/ai.ts';
+import {extractDelta, generateCellCode, renderContext, stripFences} from '../src/ai.ts';
 
 const CONFIG = {baseUrl: 'https://api.example.com/v1/', apiKey: 'sk-test', model: 'gpt-test'};
 
@@ -53,4 +53,63 @@ test('an http error surfaces with status text', async () => {
   const impl = (async () => ({ok: false, status: 401, statusText: 'Unauthorized',
     json: async () => ({})}) as unknown as Response) as typeof fetch;
   await assert.rejects(() => generateCellCode(CONFIG, 'p', 'c', impl), /401/);
+});
+
+test('variables ride along with the notebook context', async () => {
+  const {impl, calls} = stubFetch({choices: [{message: {content: 'x = 1'}}]});
+  const context = renderContext({
+    code: 'import marimo as mo',
+    variables: [
+      {name: 'df', datatype: 'DataFrame', value: 'shape: (100, 4)'},
+      {name: 'n', datatype: 'int', value: '42'},
+      {name: 'empty', datatype: null, value: null},
+    ],
+  });
+  await generateCellCode(CONFIG, 'filter df', context, {fetchImpl: impl});
+  const body = JSON.parse(String(calls[0].init.body));
+  const contextMessage = body.messages[2].content as string;
+  assert.match(contextMessage, /import marimo as mo/);
+  assert.match(contextMessage, /df.*DataFrame/s);
+  assert.match(contextMessage, /shape: \(100, 4\)/);
+  assert.match(contextMessage, /n.*int.*42/s);
+  assert.doesNotMatch(contextMessage, /empty/);
+});
+
+test('long values are flattened and truncated so the prompt stays small', () => {
+  const text = renderContext({
+    code: 'y = 1',
+    variables: [{name: 'big', datatype: 'str', value: 'a'.repeat(500)}],
+  });
+  assert.ok(text.length < 600);
+  assert.match(text, /a+\u2026/);
+  assert.doesNotMatch(text, /\n {3,}/);
+});
+
+test('streaming deltas surface as they arrive', async () => {
+  const chunks = [
+    'data: {"choices":[{"delta":{"content":"```python\\n"}}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"x = 1\\n"}}]}\n',
+    'data: {"choices":[{"delta":{"content":"x\\n```"}}]}\n\n',
+    'data: [DONE]\n\n',
+  ];
+  const impl = (async () => ({
+    ok: true, status: 200,
+    body: {getReader: () => {
+      let i = 0;
+      return {read: async () => i < chunks.length ? {done: false, value: new TextEncoder().encode(chunks[i++])} : {done: true, value: undefined}};
+    }},
+  }) as unknown as Response) as typeof fetch;
+  const seen: string[] = [];
+  const code = await generateCellCode(CONFIG, 'p', 'c', {fetchImpl: impl, onDelta: d => seen.push(d)});
+  assert.equal(code, 'x = 1\nx');
+  assert.deepEqual(seen.join(''), '```python\nx = 1\nx\n```');
+});
+
+test('non-data and malformed SSE lines are skipped, not fatal', () => {
+  assert.equal(extractDelta('data: [DONE]'), null);
+  assert.equal(extractDelta(': keep-alive'), null);
+  assert.equal(extractDelta('data: not json'), null);
+  assert.equal(extractDelta('data: {"choices":[]}'), null);
+  assert.equal(extractDelta('data: {"choices":[{"delta":{}}]}'), null);
+  assert.equal(extractDelta('data: {"choices":[{"delta":{"content":"hi"}}]}'), 'hi');
 });

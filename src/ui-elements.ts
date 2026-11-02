@@ -233,6 +233,50 @@ export function tableRows(raw: unknown): Record<string, unknown>[] {
   return value.filter((row): row is Record<string, unknown> => !!row && typeof row === 'object' && !Array.isArray(row));
 }
 
+/** Client-side ordering for a `mo.ui.table`; null keeps the data order. */
+export interface TableSort {column: string;direction: 'asc'|'desc'}
+
+export interface TableViewModelRow {index: number;cells: Record<string, unknown>}
+
+/**
+ * Search + sort over the rows *without losing the original row numbers*:
+ * selection writes back indices into the full data, so a visible row must
+ * carry the index it had before filtering. Numbers compare numerically,
+ * everything else case-insensitively by text; unknown columns and empty
+ * queries degrade to the identity order.
+ */
+export function tableViewModel(
+  rows: Record<string, unknown>[],
+  query: string,
+  sort: TableSort|null,
+  limit: number,
+): {columns: string[];rows: TableViewModelRow[]} {
+  const columns = rows.length ? Object.keys(rows[0]) : [];
+  const needle = query.trim().toLowerCase();
+  let visible = rows.map((cells, index) => ({index, cells}));
+  if (needle) {
+    visible = visible.filter(entry => columns.some(column => {
+      const value = entry.cells[column];
+      return value !== null && value !== undefined && String(value).toLowerCase().includes(needle);
+    }));
+  }
+  if (sort && columns.includes(sort.column)) {
+    const column = sort.column;
+    const factor = sort.direction === 'desc' ? -1 : 1;
+    visible = visible.slice().sort((a, b) => {
+      const left = a.cells[column];
+      const right = b.cells[column];
+      const leftNumber = typeof left === 'number' || (typeof left === 'string' && left.trim() !== '' && Number.isFinite(Number(left))) ? Number(left) : null;
+      const rightNumber = typeof right === 'number' || (typeof right === 'string' && right.trim() !== '' && Number.isFinite(Number(right))) ? Number(right) : null;
+      if (leftNumber !== null && rightNumber !== null) return factor * (leftNumber - rightNumber);
+      if (leftNumber !== null) return -factor;
+      if (rightNumber !== null) return factor;
+      return factor * String(left ?? '').localeCompare(String(right ?? ''), undefined, {sensitivity: 'base'});
+    });
+  }
+  return {columns, rows: visible.slice(0, limit)};
+}
+
 /** Tab titles arrive as rendered markdown, one per tab. */
 export function tabsLabels(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];

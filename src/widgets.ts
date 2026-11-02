@@ -6,7 +6,7 @@
  * notebook keeps working without an embedded web view. Only widgets with a
  * faithful native counterpart are claimed; the rest are labelled, never faked.
  */
-import {extractUiElements, isSupportedWidget, labelText, optionLabels, tableRows, tabsLabels, valueForWidget, type UiElement, type WidgetMarkup} from './ui-elements';
+import {extractUiElements, isSupportedWidget, labelText, optionLabels, tableRows, tableViewModel, tabsLabels, valueForWidget, type TableSort, type UiElement, type WidgetMarkup} from './ui-elements';
 
 export interface WidgetDeps {
   /** Push a value to the kernel; the view owns serialisation and error handling. */
@@ -333,76 +333,100 @@ function buildWidget(element: UiElement, innerHtml: string, deps: WidgetDeps): H
     }
     case 'table': {
       const rows = tableRows(attrs.data);
+      const columns = rows.length ? Object.keys(rows[0]) : [];
       const table = document.createElement('table');
       table.className = 'marimo-native-widget-table';
-      const columns = rows.length ? Object.keys(rows[0]) : [];
       // `selection` enables row selection; the write-back is the list of
       // selected row indices, like marimo's own table component.
       const selectionMode = attrs.selection === 'single' || attrs.selection === 'multi' ? attrs.selection : null;
       const selected = new Set<number>();
       const commit = () => send([...selected].sort((a, b) => a - b));
       if (columns.length) {
-        const head = document.createElement('thead');
-        const headRow = document.createElement('tr');
-        if (selectionMode === 'multi') {
-          const cell = document.createElement('th');
-          cell.textContent = '';
-          headRow.append(cell);
-        }
-        for (const column of columns) {
-          const cell = document.createElement('th');
-          cell.textContent = column;
-          headRow.append(cell);
-        }
-        head.append(headRow);
-        table.append(head);
-        const body = document.createElement('tbody');
-        rows.slice(0, TABLE_ROW_LIMIT).forEach((row, index) => {
-          const line = document.createElement('tr');
-          line.classList.toggle('is-selectable', !!selectionMode && !disabled);
-          const paint = () => line.classList.toggle('is-selected', selected.has(index));
-          if (selectionMode && !disabled) {
-            const pick = () => {
-              if (selectionMode === 'multi') {
-                if (selected.has(index)) selected.delete(index); else selected.add(index);
-                paint();
-              } else {
-                const previous = [...selected][0];
-                const changed = previous !== index;
-                selected.clear();
-                if (changed) selected.add(index);
-                if (previous !== undefined) {
-                  const before = body.children[previous] as HTMLElement|undefined;
-                  before?.classList.remove('is-selected');
-                }
-                paint();
-              }
-              commit();
-            };
-            if (selectionMode === 'multi') {
-              const check = document.createElement('td');
-              const box = document.createElement('input');
-              box.type = 'checkbox';
-              box.addEventListener('change', () => {
-                if (box.checked) selected.add(index); else selected.delete(index);
-                paint();
-                commit();
-              });
-              check.append(box);
-              line.append(check);
-            } else {
-              line.addEventListener('click', pick);
+        // Search and sort are client-side views; selection stays keyed to the
+        // original row indices via the view model.
+        let query = '';
+        let sort: TableSort|null = null;
+        const render = () => {
+          const view = tableViewModel(rows, query, sort, TABLE_ROW_LIMIT);
+          table.replaceChildren();
+          const head = document.createElement('thead');
+          const headRow = document.createElement('tr');
+          if (selectionMode === 'multi') {
+            const cell = document.createElement('th');
+            headRow.append(cell);
+          }
+          for (const column of view.columns) {
+            const cell = document.createElement('th');
+            cell.textContent = column;
+            cell.classList.add('is-sortable');
+            if (sort?.column === column) {
+              const mark = document.createElement('span');
+              mark.className = 'marimo-native-widget-sort';
+              mark.textContent = sort.direction === 'asc' ? '▲' : '▼';
+              cell.append(mark);
             }
+            if (!disabled) {
+              cell.addEventListener('click', () => {
+                sort = sort?.column === column
+                  ? (sort.direction === 'asc' ? {column, direction: 'desc'} : null)
+                  : {column, direction: 'asc'};
+                render();
+              });
+            }
+            headRow.append(cell);
           }
-          for (const column of columns) {
-            const cell = document.createElement('td');
-            const value = row[column];
-            cell.textContent = value === null || value === undefined ? '' : String(value);
-            line.append(cell);
+          head.append(headRow);
+          table.append(head);
+          const body = document.createElement('tbody');
+          for (const entry of view.rows) {
+            const index = entry.index;
+            const line = document.createElement('tr');
+            line.classList.toggle('is-selectable', !!selectionMode && !disabled);
+            line.classList.toggle('is-selected', selected.has(index));
+            const paint = () => line.classList.toggle('is-selected', selected.has(index));
+            if (selectionMode && !disabled) {
+              if (selectionMode === 'multi') {
+                const check = document.createElement('td');
+                const box = document.createElement('input');
+                box.type = 'checkbox';
+                box.checked = selected.has(index);
+                box.addEventListener('change', () => {
+                  if (box.checked) selected.add(index); else selected.delete(index);
+                  paint();
+                  commit();
+                });
+                check.append(box);
+                line.append(check);
+              } else {
+                line.addEventListener('click', () => {
+                  const previous = [...selected][0];
+                  const changed = previous !== index;
+                  selected.clear();
+                  if (changed) selected.add(index);
+                  // The selected row moved under sorting; repaint from the model.
+                  render();
+                  commit();
+                });
+              }
+            }
+            for (const column of view.columns) {
+              const cell = document.createElement('td');
+              const value = entry.cells[column];
+              cell.textContent = value === null || value === undefined ? '' : String(value);
+              line.append(cell);
+            }
+            body.append(line);
           }
-          body.append(line);
-        });
-        table.append(body);
+          table.append(body);
+        };
+        const search = document.createElement('input');
+        search.type = 'search';
+        search.className = 'marimo-native-widget-table-search';
+        search.placeholder = deps.translate('搜索行…', 'Search rows…');
+        search.disabled = disabled;
+        search.addEventListener('input', () => {query = search.value; render();});
+        wrapper.append(search);
+        render();
       }
       wrapper.append(table);
       const total = numberAttribute(attrs, 'totalRows', rows.length);

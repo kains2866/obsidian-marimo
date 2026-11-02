@@ -32,13 +32,7 @@ export class MarimoVariablesView extends ItemView {
   async onClose(): Promise<void> {}
 
   private activeNotebook(): MarimoView|null {
-    const active=this.app.workspace.getActiveViewOfType(MarimoView);
-    if(active&&!active.isClosed())return active;
-    for(const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
-      const view=leaf.view;
-      if(view instanceof MarimoView&&!view.isClosed())return view;
-    }
-    return null;
+    return MarimoView.mostRecent(this.app.workspace);
   }
 
   private sync(): void {

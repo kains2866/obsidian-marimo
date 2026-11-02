@@ -1086,6 +1086,17 @@
   letter-spacing: .08em;
   color: var(--text-faint);
 }
+.marimo-outline-pane .marimo-deps-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.marimo-outline-pane .marimo-deps-zoom { padding: 1px; }
+.marimo-outline-pane .marimo-deps-zoom .marimo-deps-mode {
+  min-width: 26px;
+  text-align: center;
+  padding: 1px 6px;
+}
 .marimo-outline-pane .marimo-deps-toggle {
   display: inline-flex;
   gap: 2px;
@@ -1173,29 +1184,15 @@
   align-items: stretch;
   padding: 8px 4px 16px;
 }
-.marimo-outline-pane .marimo-graph-link {
+/* Nested dependents: indented under their parent with a guide line. */
+.marimo-outline-pane .marimo-graph-children {
+  margin-left: 18px;
+  padding-left: 12px;
+  border-left: 1px solid var(--background-modifier-border);
   display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 18px;
-  position: relative;
-}
-.marimo-outline-pane .marimo-graph-link::before {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: var(--background-modifier-border);
-}
-.marimo-outline-pane .marimo-graph-node {
-  position: relative;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border-strong, var(--background-modifier-border));
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
 }
 .marimo-outline-pane .marimo-graph-card {
   display: block;

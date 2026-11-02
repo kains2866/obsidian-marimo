@@ -18,10 +18,12 @@ type Tab = 'outline'|'deps';
 type DepsMode = 'minimap'|'graph';
 
 const DEPS_MODE_KEY = 'marimo-deps-mode';
+const GRAPH_ZOOM_KEY = 'marimo-graph-zoom';
 
 export class MarimoOutlineView extends ItemView {
   private tab: Tab = 'outline';
   private depsMode: DepsMode = 'minimap';
+  private graphZoom = 1;
   private tabbar!: HTMLElement;
   private toolbar: HTMLElement|null = null;
   private body!: HTMLElement;
@@ -55,6 +57,8 @@ export class MarimoOutlineView extends ItemView {
     }));
     const saved=localStorage.getItem(DEPS_MODE_KEY);
     if(saved==='minimap'||saved==='graph')this.depsMode=saved;
+    const savedZoom=Number(localStorage.getItem(GRAPH_ZOOM_KEY));
+    if(Number.isFinite(savedZoom)&&savedZoom>=0.7&&savedZoom<=1.4)this.graphZoom=savedZoom;
     const content=this.contentEl;
     content.empty();
     content.addClass('marimo-outline-pane');
@@ -130,7 +134,25 @@ export class MarimoOutlineView extends ItemView {
   private renderDepsToolbar(body:HTMLElement):void {
     const bar=body.createDiv({cls:'marimo-deps-toolbar'});
     bar.createSpan({cls:'marimo-deps-title',text:'DEPENDENCIES'});
-    const toggle=bar.createDiv({cls:'marimo-deps-toggle'});
+    const right=bar.createDiv({cls:'marimo-deps-tools'});
+    if(this.depsMode==='graph') {
+      // Native marimo's graph has zoom controls; ours scales the tree.
+      const zoom=right.createDiv({cls:'marimo-deps-toggle marimo-deps-zoom'});
+      for(const entry of [
+        {label:'−',title:this.plugin.t('缩小','Zoom out'),step:-0.1},
+        {label:'＋',title:this.plugin.t('放大','Zoom in'),step:0.1},
+        {label:'1:1',title:this.plugin.t('重置缩放','Reset zoom'),step:null},
+      ]) {
+        const button=zoom.createEl('button',{cls:'marimo-deps-mode',text:entry.label});
+        button.setAttr('title',entry.title);
+        button.classList.toggle('is-active',entry.step===null&&this.graphZoom!==1);
+        button.onclick=()=>{
+          if(entry.step===null)this.setGraphZoom(1);
+          else this.setGraphZoom(this.graphZoom+entry.step);
+        };
+      }
+    }
+    const toggle=right.createDiv({cls:'marimo-deps-toggle'});
     for(const mode of [
       {mode:'minimap' as DepsMode,label:'MINIMAP'},
       {mode:'graph' as DepsMode,label:'GRAPH'},
@@ -183,38 +205,87 @@ export class MarimoOutlineView extends ItemView {
 
   /**
    * GRAPH: marimo's vertical cell tree — one rounded card per cell (a header
-   * bar with the cell name, the first line of code beneath it), cards linked
-   * by a slim connector.
+   * bar with the cell name, the first line of code beneath it), nested under
+   * the cells whose variables they consume. Zoom buttons scale the tree.
    */
   private renderGraph(body:HTMLElement,notebook:MarimoView):void {
     const graph=body.createDiv({cls:'marimo-graph'});
+    graph.style.zoom=String(this.graphZoom);
     const selection=notebook.getSelectedCellId();
+    const {childrenOf,roots}=this.graphTree(notebook);
     const selected: {el: HTMLElement|null} = {el: null};
-    notebook.cells.forEach((cell,index)=>{
-      if(index>0) {
-        const link=graph.createDiv({cls:'marimo-graph-link'});
-        link.createSpan({cls:'marimo-graph-node'});
-      }
-      const code=notebook.cellSource(cell.id);
-      const label=this.cellLabel(notebook,cell.id);
-      const card=graph.createEl('button',{cls:'marimo-graph-card'});
-      card.dataset.cellId=cell.id;
-      card.createDiv({cls:'marimo-graph-head',text:cell.id});
+    const rendered=new Set<string>();
+    const renderCell=(cellId:string,container:HTMLElement):void=>{
+      if(rendered.has(cellId))return; // A cycle member renders once, at its first home.
+      rendered.add(cellId);
+      const label=this.cellLabel(notebook,cellId);
+      const card=container.createEl('button',{cls:'marimo-graph-card'});
+      card.dataset.cellId=cellId;
+      card.createDiv({cls:'marimo-graph-head',text:cellId});
       card.createDiv({cls:'marimo-graph-code',text:label||this.plugin.t('empty','empty')});
       if(!label)card.addClass('is-empty');
-      if(notebook.isMarkdownCell(cell.id))card.addClass('is-markdown');
-      if(notebook.hasCellError(cell.id))card.addClass('is-error');
-      if(cell.id===selection) {
+      if(notebook.isMarkdownCell(cellId))card.addClass('is-markdown');
+      if(notebook.hasCellError(cellId))card.addClass('is-error');
+      if(cellId===selection) {
         card.addClass('is-selected');
         selected.el=card;
       }
-      card.setAttr('aria-label',(cell.id+' · '+label).slice(0,120));
-      card.onclick=()=>this.jumpTo(notebook,cell.id);
-    });
+      card.setAttr('aria-label',(cellId+' · '+label).slice(0,120));
+      card.onclick=()=>this.jumpTo(notebook,cellId);
+      const kids=childrenOf.get(cellId)??[];
+      if(kids.length) {
+        const nest=container.createDiv({cls:'marimo-graph-children'});
+        for(const kid of kids)renderCell(kid,nest);
+      }
+    };
+    for(const root of roots)renderCell(root,graph);
+    // Cells no edge reached (definition cycles, kernel not connected yet)
+    // keep their notebook place at the bottom instead of vanishing.
+    for(const cell of notebook.cells) {
+      if(!rendered.has(cell.id))renderCell(cell.id,graph);
+    }
     // Follow the notebook's selection like the native graph highlights the
     // active node: bring the selected card into view after render.
     const picked=selected.el as HTMLElement | null;
     if(picked)requestAnimationFrame(()=>picked.scrollIntoView({block:'nearest'}));
+  }
+
+  /**
+   * The dependency forest: an edge `parent → child` when the child consumes a
+   * variable the parent defines. Children keep notebook order.
+   */
+  private graphTree(notebook:MarimoView):{childrenOf:Map<string,string[]>;roots:string[]} {
+    const deps=notebook.currentCellDeps();
+    const definer=new Map<string,string>();
+    for(const [cellId,entry] of deps) {
+      for(const name of entry.outputs)if(!definer.has(name))definer.set(name,cellId);
+    }
+    const parents=new Map<string,string[]>();
+    const childrenOf=new Map<string,string[]>();
+    const ids=notebook.cells.map(cell=>cell.id);
+    for(const cellId of ids) {
+      const seen=new Set<string>();
+      for(const name of deps.get(cellId)?.inputs??[]) {
+        const parent=definer.get(name);
+        if(parent&&parent!==cellId&&!seen.has(parent))seen.add(parent);
+      }
+      parents.set(cellId,[...seen]);
+    }
+    for(const cellId of ids) {
+      for(const parent of parents.get(cellId)??[]) {
+        const list=childrenOf.get(parent)??[];
+        list.push(cellId);
+        childrenOf.set(parent,list);
+      }
+    }
+    const roots=ids.filter(cellId=>(parents.get(cellId)??[]).length===0);
+    return {childrenOf,roots};
+  }
+
+  private setGraphZoom(value:number):void {
+    this.graphZoom=Math.min(1.4,Math.max(0.7,Math.round(value*100)/100));
+    localStorage.setItem(GRAPH_ZOOM_KEY,String(this.graphZoom));
+    this.sync();
   }
 
   /**

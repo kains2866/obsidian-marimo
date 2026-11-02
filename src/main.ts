@@ -10,6 +10,7 @@ import {MarimoVariablesView, VIEW_TYPE_VARIABLES} from './variables-view';
 import {NOTEBOOK_TEMPLATE, nextNotebookPath} from './notebook-file';
 import type {Cell} from './protocol';
 import {WriterLocks,type WriterLease} from './writer-lock';
+import {defaultPythonPath} from './python-path';
 
 interface Settings {pythonPath: string;associatePython:boolean;renderMarkdown:boolean;autoConnect:boolean;aiBaseUrl:string;aiApiKey:string;aiModel:string}
 export default class MarimoPlugin extends Plugin {
@@ -19,7 +20,7 @@ export default class MarimoPlugin extends Plugin {
   private writers = new WriterLocks();
   t(zh: string, en: string): string {return getLanguage().toLowerCase().startsWith('zh') ? zh : en;}
   async onload(): Promise<void> {
-    const fallback=join(homedir(),'.local','share','uv','tools','marimo','bin','python');
+    const fallback=this.defaultPython();
     const saved=await this.loadData();
     this.settings={pythonPath:normalizePython(saved?.pythonPath,existsSync(fallback)?fallback:'python3'),associatePython:saved?.associatePython!==false,renderMarkdown:saved?.renderMarkdown!==false,autoConnect:saved?.autoConnect!==false,aiBaseUrl:String(saved?.aiBaseUrl??''),aiApiKey:String(saved?.aiApiKey??''),aiModel:String(saved?.aiModel??'')};
     this.recovery=new RecoveryStore(join(homedir(),'.local','state','obsidian-marimo','drafts',createHash('sha256').update(this.absoluteRoot()).digest('hex')));
@@ -80,7 +81,11 @@ export default class MarimoPlugin extends Plugin {
       ];}
     }(this.app,this));
   }
-  getPythonPath():string {const fallback=join(homedir(),'.local','share','uv','tools','marimo','bin','python');return normalizePython(this.settings.pythonPath,existsSync(fallback)?fallback:'python3');}
+  /** Platform-correct marimo interpreter: uv's layout differs on Windows. */
+  defaultPython():string {
+    return defaultPythonPath({platform:process.platform,home:homedir(),exists:existsSync});
+  }
+  getPythonPath():string {return normalizePython(this.settings.pythonPath,this.defaultPython());}
   async onExternalSettingsChange(): Promise<void> {const saved=await this.loadData();this.settings={pythonPath:normalizePython(saved?.pythonPath,this.settings.pythonPath),associatePython:saved?.associatePython!==false,renderMarkdown:saved?.renderMarkdown!==false,autoConnect:saved?.autoConnect!==false,aiBaseUrl:String(saved?.aiBaseUrl??this.settings.aiBaseUrl),aiApiKey:String(saved?.aiApiKey??this.settings.aiApiKey),aiModel:String(saved?.aiModel??this.settings.aiModel)};}
   async openFile(file:TFile): Promise<void> {
     const existing=this.app.workspace.getLeavesOfType(VIEW_TYPE).find(leaf=>!leaf.isDeferred&&leaf.view instanceof MarimoView&&!leaf.view.isClosed()&&leaf.view.getState().filename===file.path);

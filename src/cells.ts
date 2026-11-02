@@ -21,6 +21,15 @@ export function moveCell(cells: Cell[], from: number, to: number): Cell[] {
   return next;
 }
 
+/**
+ * Where a dragged cell should land: the drag line counts only the *other*
+ * rows before it, which is already an index into the list without the
+ * dragged cell — clamp it so appending below the last row stays valid.
+ */
+export function dragTargetIndex(rowsBefore: number, total: number): number {
+  return Math.max(0, Math.min(rowsBefore, total - 1));
+}
+
 /** Insert a cell at `index`, clamped so the result always contains every cell. */
 export function insertCell(cells: Cell[], cell: Cell, index: number): Cell[] {
   const next = cells.slice();

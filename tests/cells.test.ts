@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {insertCell, moveCell, nextCellId, removeCell, splitCellCode} from '../src/cells.ts';
+import {dragTargetIndex, insertCell, moveCell, nextCellId, removeCell, splitCellCode} from '../src/cells.ts';
 import type {Cell} from '../src/protocol.ts';
 
 const cells: Cell[] = [
@@ -59,4 +59,17 @@ test('splitting at the edges keeps one side empty instead of losing code', () =>
   assert.deepEqual(splitCellCode('a = 1', 5), {before: 'a = 1', after: ''});
   assert.deepEqual(splitCellCode('a = 1', 99), {before: 'a = 1', after: ''});
   assert.deepEqual(splitCellCode('a = 1', -3), {before: '', after: 'a = 1'});
+});
+
+test('drag insertion index clamps to a valid move target', () => {
+  assert.equal(dragTargetIndex(0, 4), 0);
+  assert.equal(dragTargetIndex(2, 4), 2);
+  assert.equal(dragTargetIndex(3, 4), 3);
+  assert.equal(dragTargetIndex(9, 4), 3);
+  assert.equal(dragTargetIndex(0, 1), 0);
+});
+
+test('dragging the last row home stays a no-op target', () => {
+  // cells a,b,c,d; dragging d with the line before b → insert index 1.
+  assert.equal(dragTargetIndex(1, 4), 1);
 });

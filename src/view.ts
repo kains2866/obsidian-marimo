@@ -6,7 +6,7 @@ import {defaultKeymap, history, historyKeymap} from '@codemirror/commands';
 import {autocompletion, type CompletionContext, type CompletionResult} from '@codemirror/autocomplete';
 import {syntaxHighlighting} from '@codemirror/language';
 import {Backend} from './bridge';
-import {insertCell, moveCell, nextCellId, removeCell, splitCellCode} from './cells';
+import {dragTargetIndex, insertCell, moveCell, nextCellId, removeCell, splitCellCode} from './cells';
 import {cellPresentation, mergeCellConfig, readCellConfig, wireConfig, type CellConfig} from './cell-config';
 import {nativeHighlight} from './editor-theme';
 import {isErrorOutput, isStdinOutput, safeOutput, type BackendMessage, type Cell} from './protocol';
@@ -857,6 +857,9 @@ export class MarimoView extends EditableFileView {
       this.cellAction(actions,'cell-insert','plus',this.plugin.t('在下方插入单元格','Insert cell below'),(event) => this.toggleInsertMenu(event.currentTarget as HTMLElement,cell.id));
       this.cellAction(actions,'cell-up','arrow-up',this.plugin.t('上移','Move up'),() => this.shiftCell(cell.id,-1));
       this.cellAction(actions,'cell-down','arrow-down',this.plugin.t('下移','Move down'),() => this.shiftCell(cell.id,1));
+      const drag=this.cellAction(actions,'cell-drag','grip-vertical',this.plugin.t('拖动排序','Drag to reorder'),()=>{});
+      drag.addClass('marimo-native-drag-handle');
+      drag.addEventListener('pointerdown',event=>this.startCellDrag(event,cell.id));
       this.cellAction(actions,'cell-config','more-horizontal',this.plugin.t('单元格设置','Cell settings'),(event) => this.toggleCellMenu(event.currentTarget as HTMLElement,cell.id));
       this.cellAction(actions,'cell-remove','trash-2',this.plugin.t('删除此单元格','Delete this cell'),() => void this.deleteCell(cell.id));
     }
@@ -1827,6 +1830,75 @@ export class MarimoView extends EditableFileView {
     this.selectCell(cellId,true);
     this.updateControls();
     this.editors.get(cellId)?.view.focus();
+  }
+
+  /**
+   * Drag a cell by its grip handle. The drop line is a real element inserted
+   * between rows — layout-driven placement, immune to zoom/transform bending
+   * that breaks fixed-coordinate math. The move applies on pointer-up.
+   */
+  private startCellDrag(event: PointerEvent, cellId: string): void {
+    if(!this.canEditStructure()||this.cells.length<2)return;
+    const handle=event.currentTarget as HTMLElement;
+    const row=this.rowFor(cellId);
+    if(!row||event.button!==0)return;
+    event.preventDefault();
+    const startY=event.clientY;
+    let active=false;
+    let line: HTMLElement|null=null;
+    let rowsBefore=0;
+    const otherRows=(): HTMLElement[] =>
+      [...this.body.querySelectorAll<HTMLElement>('.marimo-native-cell')].filter(item=>item!==row);
+    const place=(clientY:number):number=>{
+      if(!line) {
+        line=document.createElement('div');
+        line.className='marimo-drag-line';
+      }
+      const rows=otherRows();
+      let anchor: HTMLElement|null=null;
+      let before=0;
+      for(const item of rows) {
+        const rect=item.getBoundingClientRect();
+        if(clientY<rect.top+rect.height/2) {anchor=item;break;}
+        before++;
+      }
+      if(anchor)anchor.parentElement!.insertBefore(line,anchor);
+      else if(rows.length)rows[rows.length-1]!.parentElement!.insertBefore(line,rows[rows.length-1]!.nextSibling);
+      else this.body.appendChild(line);
+      return before;
+    };
+    const move=(moveEvent: PointerEvent)=>{
+      if(!active) {
+        if(Math.abs(moveEvent.clientY-startY)<4)return;
+        active=true;
+        row.addClass('is-dragging');
+        document.body.addClass('marimo-cell-dragging');
+      }
+      rowsBefore=place(moveEvent.clientY);
+    };
+    const end=(upEvent: PointerEvent)=>{
+      window.removeEventListener('pointermove',move);
+      window.removeEventListener('pointerup',end);
+      row.removeClass('is-dragging');
+      document.body.removeClass('marimo-cell-dragging');
+      line?.remove();
+      line=null;
+      if(!active)return;
+      const from=this.cells.findIndex(cell=>cell.id===cellId);
+      const to=dragTargetIndex(rowsBefore,this.cells.length);
+      if(to===from)return;
+      const cells=this.readCells();
+      const next=moveCell(cells,from,to);
+      if(next.every((cell,index)=>cell.id===cells[index].id))return;
+      this.cells=next;
+      this.markStructuralChange();
+      this.reflowColumns();
+      this.selectedId=cellId;
+      this.selectCell(cellId,true);
+      this.updateControls();
+    };
+    window.addEventListener('pointermove',move);
+    window.addEventListener('pointerup',end);
   }
 
   /** Jump the cell to the first or last slot; a one-cell notebook is a no-op. */

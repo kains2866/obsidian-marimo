@@ -1242,3 +1242,24 @@
   font-style: italic;
   pointer-events: none;
 }
+
+/* ------------------------------------------------ cell drag to reorder */
+
+.marimo-outline-pane .marimo-native-drag-handle,
+.marimo-native-drag-handle {
+  cursor: grab;
+  touch-action: none;
+}
+.marimo-native-drag-handle:active { cursor: grabbing; }
+body.marimo-cell-dragging {
+  user-select: none;
+  cursor: grabbing;
+}
+.marimo-native-cell.is-dragging { opacity: .45; }
+.marimo-drag-line {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--interactive-accent);
+  margin: 2px 0;
+  pointer-events: none;
+}

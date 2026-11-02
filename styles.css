@@ -799,7 +799,15 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.marimo-outline-item {
+/* Dawn themes restyle raw `button` elements (gray background, centered
+   inline-flex, fixed height) with rules that beat a bare class selector,
+   so every outline row needs the pane prefix to keep its list look. */
+.marimo-outline-pane .marimo-outline-item {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  justify-content: flex-start;
   border: none;
   background: none;
   box-shadow: none;
@@ -814,13 +822,13 @@
   text-overflow: ellipsis;
   cursor: pointer;
 }
-.marimo-outline-item:hover { background: var(--background-modifier-hover); }
-.marimo-outline-item[data-level="1"] { font-weight: var(--font-medium); }
-.marimo-outline-item[data-level="2"] { padding-left: 24px; }
-.marimo-outline-item[data-level="3"] { padding-left: 38px; }
-.marimo-outline-item[data-level="4"] { padding-left: 52px; }
-.marimo-outline-item[data-level="5"] { padding-left: 66px; }
-.marimo-outline-item[data-level="6"] { padding-left: 80px; }
+.marimo-outline-pane .marimo-outline-item:hover { background: var(--background-modifier-hover); }
+.marimo-outline-pane .marimo-outline-item[data-level="1"] { font-weight: var(--font-medium); }
+.marimo-outline-pane .marimo-outline-item[data-level="2"] { padding-left: 24px; }
+.marimo-outline-pane .marimo-outline-item[data-level="3"] { padding-left: 38px; }
+.marimo-outline-pane .marimo-outline-item[data-level="4"] { padding-left: 52px; }
+.marimo-outline-pane .marimo-outline-item[data-level="5"] { padding-left: 66px; }
+.marimo-outline-pane .marimo-outline-item[data-level="6"] { padding-left: 80px; }
 .marimo-outline-empty {
   padding: 8px 10px;
   color: var(--text-faint);

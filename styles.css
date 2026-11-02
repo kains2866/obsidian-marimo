@@ -282,6 +282,16 @@
 }
 /* The kernel's copy is suppressed in code, so an empty output draws nothing. */
 .marimo-native-cell.is-markdown .marimo-native-output:not(.has-output) { display: none; }
+/* A dynamic markdown cell edits from its kernel render: a double click opens
+   the editor (native marimo's gesture), so the region borrows the preview's
+   affordance while the editor is folded. */
+.marimo-native-cell.is-markdown:not(.is-source-open) .marimo-native-output.has-output {
+  cursor: text;
+}
+.marimo-native-cell.is-markdown:not(.is-source-open) .marimo-native-output.has-output:hover {
+  background: var(--background-modifier-hover);
+  border-radius: var(--radius-s);
+}
 
 .marimo-native-cell.is-markdown:not(.is-source-open) .marimo-native-editor { display: none; }
 /* The source toggle only exists on markdown rows. */

@@ -728,6 +728,14 @@ export class MarimoView extends EditableFileView {
     output.createDiv({cls:'marimo-native-display'});
     output.createDiv({cls:'marimo-native-console'});
     this.outputs.set(cell.id,output);
+    if(markdown) {
+      // Native marimo opens the editor when the rendered markdown is
+      // double-clicked. Static rows already edit on a single preview click,
+      // but a dynamic cell's render lives in the kernel output region, which
+      // had no gesture at all — only the hover rail reached the editor.
+      output.addEventListener('dblclick',()=>this.openMarkdownSource(cell.id));
+      output.setAttr('aria-label',this.plugin.t('Markdown 单元格 · 双击编辑 Markdown','Markdown cell · double-click to edit markdown'));
+    }
     this.applyCellConfig(row,cell.id);
     return row;
   }

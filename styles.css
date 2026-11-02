@@ -1085,10 +1085,18 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   padding: 2px 2px 8px;
 }
 .marimo-outline-pane .marimo-deps-title {
+  /* The label may shrink (with an ellipsis) at narrow sidebar widths; the
+     MINIMAP | GRAPH controls to its right must never be pushed out. */
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: var(--font-ui-smaller);
   font-weight: var(--font-bold);
   letter-spacing: .08em;
@@ -1097,8 +1105,14 @@
 .marimo-outline-pane .marimo-deps-tools {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
+  /* Shrinkable so the zoom group and the MINIMAP | GRAPH toggle can stack
+     at narrow sidebar widths instead of being pushed out of the pane. */
+  flex: 0 1 auto;
+  min-width: 0;
 }
+.marimo-outline-pane .marimo-deps-tools > * { min-width: 0; }
 .marimo-outline-pane .marimo-deps-zoom { padding: 1px; }
 .marimo-outline-pane .marimo-deps-zoom .marimo-deps-mode {
   min-width: 26px;

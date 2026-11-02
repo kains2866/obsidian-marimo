@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: obsidian-marimo-notebook/package-lock.json
+      - name: Install dependencies
+        working-directory: obsidian-marimo-notebook
+        run: npm ci
+      - name: Unit tests
+        working-directory: obsidian-marimo-notebook
+        run: npm test
+      - name: Typecheck
+        working-directory: obsidian-marimo-notebook
+        run: npm run typecheck
+      - name: Build
+        working-directory: obsidian-marimo-notebook
+        run: npm run build
+      - name: Package release zip
+        working-directory: obsidian-marimo-notebook
+        run: node scripts/package.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-release
+          path: obsidian-marimo-notebook/release/*.zip
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the pinned marimo runtime
+        run: pip install marimo==0.25.2 websockets
+      - name: Adapter tests
+        working-directory: obsidian-marimo-notebook
+        run: python -m unittest discover -s tests -p 'test_*.py'

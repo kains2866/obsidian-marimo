@@ -121,7 +121,7 @@ export class MarimoView extends EditableFileView {
   /** Kernel-pushed dataflow state for the sidebar variables panel. */
   private variableDecls: {name:string;declared_by:string[];used_by:string[]}[] = [];
   private variableValues = new Map<string,{name:string;datatype:string|null;value:string|null}>();
-  private datasets: {name:string;source:string}[] = [];
+  private datasets: {name:string;source:string;numRows:number|null;numColumns:number|null;variableName:string|null;columns:{name:string;type:string}[]}[] = [];
   constructor(leaf: WorkspaceLeaf, private plugin: MarimoPlugin) {super(leaf);}
   isClosed():boolean {return this.closed;}
   getViewType(): string {return VIEW_TYPE;}
@@ -635,10 +635,24 @@ export class MarimoView extends EditableFileView {
       return;
     }
     if(data.op==='datasets') {
+      // The kernel sends rich DataTables; keep what the panel can show.
       this.datasets=Array.isArray(data.tables)
-        ? data.tables.filter((entry): entry is {name:string;source:string} =>
-            !!entry&&typeof (entry as {name?:unknown}).name==='string')
-            .map(entry=>({name:entry.name,source:typeof entry.source==='string'?entry.source:''}))
+        ? data.tables.filter((entry): entry is Record<string,unknown>=>!!entry&&typeof (entry as {name?:unknown}).name==='string')
+            .map(entry=>{
+              const columns=Array.isArray(entry.columns)
+                ? entry.columns.filter((column): column is {name:string;type:string} =>
+                    !!column&&typeof (column as {name?:unknown}).name==='string')
+                    .map(column=>({name:column.name,type:typeof column.type==='string'?column.type:''}))
+                : [];
+              return {
+                name:String(entry.name),
+                source:typeof entry.source==='string'?entry.source:'',
+                numRows:typeof entry.num_rows==='number'?entry.num_rows:null,
+                numColumns:typeof entry.num_columns==='number'?entry.num_columns:null,
+                variableName:typeof entry.variable_name==='string'?entry.variable_name:null,
+                columns,
+              };
+            })
         : [];
       this.publishVariables();
       return;
@@ -1683,7 +1697,7 @@ export class MarimoView extends EditableFileView {
     });
   }
 
-  currentDatasets(): {name:string;source:string}[] {
+  currentDatasets(): {name:string;source:string;numRows:number|null;numColumns:number|null;variableName:string|null;columns:{name:string;type:string}[]}[] {
     return this.datasets;
   }
 

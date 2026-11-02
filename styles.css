@@ -1034,3 +1034,16 @@
 }
 .marimo-native-dataframe-column-name { color: var(--text-normal); margin-right: 4px; }
 .marimo-native-dataframe-column-type { opacity: 0.8; }
+
+.marimo-dataset { margin-bottom: 6px; }
+.marimo-dataset-toggle {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+  padding: 2px 0;
+}
+.marimo-dataset-toggle:hover { color: var(--text-normal); }
+.marimo-dataset-columns { padding-left: 12px; }
+.marimo-dataset-column { font-size: var(--font-ui-smaller); }

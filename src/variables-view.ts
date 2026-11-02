@@ -80,8 +80,42 @@ export class MarimoVariablesView extends ItemView {
       content.createDiv({cls:'marimo-variables-heading',text:this.plugin.t('数据源','Data sources')});
       for(const table of datasets) {
         const row=content.createDiv({cls:'marimo-dataset'});
-        row.createSpan({cls:'marimo-variable-name',text:table.name});
-        if(table.source)row.createSpan({cls:'marimo-variable-type',text:table.source});
+        const head=row.createDiv({cls:'marimo-variable-line'});
+        head.createSpan({cls:'marimo-variable-name',text:table.name});
+        const meta:string[]=[];
+        if(table.numRows!==null)meta.push(this.plugin.t(`${table.numRows} 行`,`${table.numRows} rows`));
+        if(table.numColumns!==null)meta.push(this.plugin.t(`${table.numColumns} 列`,`${table.numColumns} cols`));
+        if(table.source)meta.push(table.source);
+        if(meta.length)head.createSpan({cls:'marimo-variable-type',text:meta.join(' · ')});
+        // Columns are the useful part for the data explorer experience;
+        // they are revealed on click to keep the pane compact.
+        if(table.columns.length) {
+          const toggle=row.createEl('button',{cls:'marimo-dataset-toggle'});
+          toggle.textContent=this.plugin.t(`列 (${table.columns.length}) ▸`,`columns (${table.columns.length}) ▸`);
+          const list=row.createDiv({cls:'marimo-dataset-columns'});
+          list.hidden=true;
+          toggle.onclick=()=>{
+            list.hidden=!list.hidden;
+            toggle.textContent=list.hidden
+              ?this.plugin.t(`列 (${table.columns.length}) ▸`,`columns (${table.columns.length}) ▸`)
+              :this.plugin.t(`列 (${table.columns.length}) ▾`,`columns (${table.columns.length}) ▾`);
+          };
+          for(const column of table.columns.slice(0,50)) {
+            const line=list.createDiv({cls:'marimo-variable-line marimo-dataset-column'});
+            line.createSpan({cls:'marimo-variable-name',text:column.name});
+            if(column.type)line.createSpan({cls:'marimo-variable-type',text:column.type});
+          }
+          if(table.columns.length>50)list.createDiv({cls:'marimo-outline-empty',text:this.plugin.t('其余列已省略…','More columns omitted…')});
+        }
+        // Clicking the table jumps to the cell that declares its variable.
+        const declaredBy=table.variableName
+          ?notebook.currentVariables().find(entry=>entry.name===table.variableName)?.declaredBy[0]
+          :undefined;
+        if(declaredBy)row.onclick=()=>{
+          const leaf=this.app.workspace.getLeavesOfType(VIEW_TYPE).find(candidate=>candidate.view===notebook);
+          if(leaf)void this.app.workspace.revealLeaf(leaf);
+          notebook.revealCell(declaredBy);
+        };
       }
     }
   }

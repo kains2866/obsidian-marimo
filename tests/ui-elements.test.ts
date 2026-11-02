@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {decodeAttribute, extractUiElements, isSupportedWidget, labelText, optionLabels, readUiElement, tableRows, tabsLabels, valueForWidget} from '../src/ui-elements.ts';
+import { decodeAttribute, extractUiElements, isSupportedWidget, labelText, optionLabels, readUiElement, tableRows, tabsLabels, valueForWidget } from '../src/ui-elements.ts';
 
 /**
  * Fixtures are the raw attribute text marimo 0.25.2 emits (captured from a real
@@ -181,4 +181,11 @@ test('markup without an object id or with unbalanced tags is left alone', () => 
   assert.equal(extractUiElements(truncated).widgets.length, 0);
   // A lone closing tag must not confuse the scanner.
   assert.equal(extractUiElements("</marimo-ui-element>tail").html, "</marimo-ui-element>tail");
+});
+
+test('table selection writes back row indices only', () => {
+  assert.deepEqual(valueForWidget('table', [2, 0, '1']), [2, 0, 1]);
+  assert.deepEqual(valueForWidget('table', []), []);
+  assert.deepEqual(valueForWidget('table', null), []);
+  assert.deepEqual(valueForWidget('table', ['x', 1.5]), [1.5].filter(Number.isInteger));
 });

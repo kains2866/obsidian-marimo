@@ -336,9 +336,19 @@ function buildWidget(element: UiElement, innerHtml: string, deps: WidgetDeps): H
       const table = document.createElement('table');
       table.className = 'marimo-native-widget-table';
       const columns = rows.length ? Object.keys(rows[0]) : [];
+      // `selection` enables row selection; the write-back is the list of
+      // selected row indices, like marimo's own table component.
+      const selectionMode = attrs.selection === 'single' || attrs.selection === 'multi' ? attrs.selection : null;
+      const selected = new Set<number>();
+      const commit = () => send([...selected].sort((a, b) => a - b));
       if (columns.length) {
         const head = document.createElement('thead');
         const headRow = document.createElement('tr');
+        if (selectionMode === 'multi') {
+          const cell = document.createElement('th');
+          cell.textContent = '';
+          headRow.append(cell);
+        }
         for (const column of columns) {
           const cell = document.createElement('th');
           cell.textContent = column;
@@ -347,8 +357,43 @@ function buildWidget(element: UiElement, innerHtml: string, deps: WidgetDeps): H
         head.append(headRow);
         table.append(head);
         const body = document.createElement('tbody');
-        for (const row of rows.slice(0, TABLE_ROW_LIMIT)) {
+        rows.slice(0, TABLE_ROW_LIMIT).forEach((row, index) => {
           const line = document.createElement('tr');
+          line.classList.toggle('is-selectable', !!selectionMode && !disabled);
+          const paint = () => line.classList.toggle('is-selected', selected.has(index));
+          if (selectionMode && !disabled) {
+            const pick = () => {
+              if (selectionMode === 'multi') {
+                if (selected.has(index)) selected.delete(index); else selected.add(index);
+                paint();
+              } else {
+                const previous = [...selected][0];
+                const changed = previous !== index;
+                selected.clear();
+                if (changed) selected.add(index);
+                if (previous !== undefined) {
+                  const before = body.children[previous] as HTMLElement|undefined;
+                  before?.classList.remove('is-selected');
+                }
+                paint();
+              }
+              commit();
+            };
+            if (selectionMode === 'multi') {
+              const check = document.createElement('td');
+              const box = document.createElement('input');
+              box.type = 'checkbox';
+              box.addEventListener('change', () => {
+                if (box.checked) selected.add(index); else selected.delete(index);
+                paint();
+                commit();
+              });
+              check.append(box);
+              line.append(check);
+            } else {
+              line.addEventListener('click', pick);
+            }
+          }
           for (const column of columns) {
             const cell = document.createElement('td');
             const value = row[column];
@@ -356,7 +401,7 @@ function buildWidget(element: UiElement, innerHtml: string, deps: WidgetDeps): H
             line.append(cell);
           }
           body.append(line);
-        }
+        });
         table.append(body);
       }
       wrapper.append(table);

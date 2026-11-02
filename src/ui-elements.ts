@@ -274,6 +274,10 @@ export function valueForWidget(kind: string, input: unknown): unknown {
       return input === null || input === undefined || input === '' ? [] : [String(input)];
     case 'multiselect':
       return Array.isArray(input) ? input.map(String) : [];
+    case 'table':
+      // Row selection writes back the selected row indices (list[int]), the
+      // exact shape `table._convert_value` consumes in the pinned version.
+      return Array.isArray(input) ? input.map(Number).filter(Number.isInteger) : [];
     default:
       return input;
   }

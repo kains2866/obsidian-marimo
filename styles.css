@@ -738,6 +738,8 @@
 }
 .marimo-native-widget-table th { color: var(--text-muted); font-weight: var(--font-medium); }
 .marimo-native-widget-table tbody tr:hover { background: var(--background-modifier-hover); }
+.marimo-native-widget-table tr.is-selectable { cursor: pointer; }
+.marimo-native-widget-table tr.is-selected { background: var(--background-modifier-active-hover); }
 
 .marimo-native-widget-note {
   flex: 1 1 100%;

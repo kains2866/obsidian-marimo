@@ -105,6 +105,10 @@ export class MarimoView extends EditableFileView {
   /** A fullscreen output lives on document.body; this is how it goes home. */
   private fullscreenReturn: {el:HTMLElement;parent:Node;next:Node|null}|null = null;
   private fullscreenEsc: ((event:KeyboardEvent)=>void)|null = null;
+  /** Kernel-pushed dataflow state for the sidebar variables panel. */
+  private variableDecls: {name:string;declared_by:string[];used_by:string[]}[] = [];
+  private variableValues = new Map<string,{name:string;datatype:string|null;value:string|null}>();
+  private datasets: {name:string;source:string}[] = [];
   constructor(leaf: WorkspaceLeaf, private plugin: MarimoPlugin) {super(leaf);}
   isClosed():boolean {return this.closed;}
   getViewType(): string {return VIEW_TYPE;}
@@ -554,6 +558,43 @@ export class MarimoView extends EditableFileView {
       else if(this.runPhase!=='interrupted') this.runPhase='finished';
       // Availability changes with the phase: run replaces interrupt.
       this.updateControls();
+      return;
+    }
+    // The kernel broadcasts its dataflow graph, value previews and datasets
+    // after every reactive cycle; the sidebar variables panel consumes them.
+    if(data.op==='variables') {
+      this.variableDecls=Array.isArray(data.variables)
+        ? data.variables.filter((entry): entry is {name:string;declared_by:string[];used_by:string[]} =>
+            !!entry&&typeof (entry as {name?:unknown}).name==='string')
+        : [];
+      // Each values broadcast carries only the executing cell's defs, so the
+      // map merges across cycles; the declaration graph is the authority on
+      // which variables still exist.
+      const alive=new Set(this.variableDecls.map(entry=>entry.name));
+      for(const name of [...this.variableValues.keys()]) if(!alive.has(name))this.variableValues.delete(name);
+      this.publishVariables();
+      return;
+    }
+    if(data.op==='variable-values') {
+      if(Array.isArray(data.variables))for(const entry of data.variables) {
+        if(entry&&typeof (entry as {name?:unknown}).name==='string') {
+          this.variableValues.set((entry as {name:string}).name,{
+            name:(entry as {name:string}).name,
+            datatype:(entry as {datatype?:unknown}).datatype===null||typeof (entry as {datatype?:unknown}).datatype==='string'?(entry as {datatype:string|null}).datatype:null,
+            value:(entry as {value?:unknown}).value===null||typeof (entry as {value?:unknown}).value==='string'?(entry as {value:string|null}).value:null,
+          });
+        }
+      }
+      this.publishVariables();
+      return;
+    }
+    if(data.op==='datasets') {
+      this.datasets=Array.isArray(data.tables)
+        ? data.tables.filter((entry): entry is {name:string;source:string} =>
+            !!entry&&typeof (entry as {name?:unknown}).name==='string')
+            .map(entry=>({name:entry.name,source:typeof entry.source==='string'?entry.source:''}))
+        : [];
+      this.publishVariables();
       return;
     }
     if(data.op!=='cell-op') return;
@@ -1352,6 +1393,25 @@ export class MarimoView extends EditableFileView {
     if(this.fullscreenEsc){document.removeEventListener('keydown',this.fullscreenEsc,true);this.fullscreenEsc=null;}
   }
 
+  // ------------------------------------------------------------- variables panel
+
+  private publishVariables(): void {
+    if(this.closed)return;
+    this.app.workspace.trigger('marimo-variables-changed',this);
+  }
+
+  /** Declarations joined with live value previews, in declaration order. */
+  currentVariables(): {name:string;datatype:string|null;value:string|null;declaredBy:string[]}[] {
+    return this.variableDecls.map(entry=>{
+      const value=this.variableValues.get(entry.name);
+      return {name:entry.name,datatype:value?.datatype??null,value:value?.value??null,declaredBy:entry.declared_by??[]};
+    });
+  }
+
+  currentDatasets(): {name:string;source:string}[] {
+    return this.datasets;
+  }
+
   /** Outline follows markdown edits, debounced like the preview repaint. */
   private scheduleOutlineRefresh(): void {
     if(this.outlineTimer)clearTimeout(this.outlineTimer);
@@ -1820,6 +1880,8 @@ export class MarimoView extends EditableFileView {
       this.editors.clear();this.outputs.clear();
       this.cells=[];this.baseCodes=[];this.dirty=false;this.runPhase='none';this.changedSinceRun=false;
       this.selectedId=null;this.hasDraft=false;
+      this.variableDecls=[];this.variableValues.clear();this.datasets=[];
+      this.publishVariables();
       if(this.restoreButton)this.restoreButton.hidden=true;
       if(this.body)this.body.empty();
       if(this.previewNote)this.previewNote.hidden=true;

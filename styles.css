@@ -780,6 +780,58 @@
   font-size: var(--font-ui-small);
 }
 
+/* ------------------------------------------------------ variables pane */
+
+.marimo-variables-pane { display: flex; flex-direction: column; gap: 1px; }
+.marimo-variables-heading {
+  padding: 8px 10px 4px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smallest);
+  font-weight: var(--font-medium);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+.marimo-variable {
+  border: none;
+  background: none;
+  box-shadow: none;
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 4px 10px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+}
+.marimo-variable:hover { background: var(--background-modifier-hover); }
+.marimo-variable-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.marimo-variable-name {
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.marimo-variable-type {
+  color: var(--text-faint);
+  flex-shrink: 0;
+  font-size: var(--font-ui-smallest);
+}
+.marimo-variable-value {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.marimo-dataset {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 10px;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+}
+
 /* ------------------------------------------------------ AI generate prompt */
 
 .marimo-ai-prompt .marimo-ai-hint {

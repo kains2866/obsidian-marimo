@@ -6,6 +6,7 @@ import {createHash} from 'node:crypto';
 import {RecoveryStore, normalizePython} from './recovery';
 import {MarimoView, VIEW_TYPE} from './view';
 import {MarimoOutlineView, VIEW_TYPE_OUTLINE} from './outline-view';
+import {MarimoVariablesView, VIEW_TYPE_VARIABLES} from './variables-view';
 import {NOTEBOOK_TEMPLATE, nextNotebookPath} from './notebook-file';
 import type {Cell} from './protocol';
 import {WriterLocks,type WriterLease} from './writer-lock';
@@ -26,6 +27,7 @@ export default class MarimoPlugin extends Plugin {
     // marimo's outline lives in Obsidian's right dock, next to the core
     // Outline view, and follows the active notebook automatically.
     this.registerView(VIEW_TYPE_OUTLINE,leaf=>new MarimoOutlineView(leaf,this));
+    this.registerView(VIEW_TYPE_VARIABLES,leaf=>new MarimoVariablesView(leaf,this));
     this.addCommand({id:'open-marimo-outline',name:this.t('打开 marimo 大纲','Open marimo outline'),callback:()=>{
       // Reuse the pane if it exists; a second command press must not stack
       // another empty leaf into the right dock.
@@ -33,6 +35,13 @@ export default class MarimoPlugin extends Plugin {
       const leaf=existing??this.app.workspace.getRightLeaf(false);
       if(!leaf)return;
       const done=existing?Promise.resolve():leaf.setViewState({type:VIEW_TYPE_OUTLINE,active:true});
+      void done.then(()=>this.app.workspace.revealLeaf(leaf));
+    }});
+    this.addCommand({id:'open-marimo-variables',name:this.t('打开 marimo 变量面板','Open marimo variables'),callback:()=>{
+      const existing=this.app.workspace.getLeavesOfType(VIEW_TYPE_VARIABLES)[0];
+      const leaf=existing??this.app.workspace.getRightLeaf(false);
+      if(!leaf)return;
+      const done=existing?Promise.resolve():leaf.setViewState({type:VIEW_TYPE_VARIABLES,active:true});
       void done.then(()=>this.app.workspace.revealLeaf(leaf));
     }});
     if(this.settings.associatePython) {

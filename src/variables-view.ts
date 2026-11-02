@@ -26,6 +26,12 @@ export class MarimoVariablesView extends ItemView {
     const workspace: Events = this.app.workspace;
     this.registerEvent(workspace.on('marimo-variables-changed',()=>this.sync()));
     this.registerEvent(workspace.on('active-leaf-change',()=>this.sync()));
+    // The workspace may restore notebook leaves after this panel opens.
+    let layoutTimer: ReturnType<typeof setTimeout>|null=null;
+    this.registerEvent(workspace.on('layout-change',()=>{
+      if(layoutTimer)clearTimeout(layoutTimer);
+      layoutTimer=setTimeout(()=>{layoutTimer=null;this.sync();},300);
+    }));
     this.sync();
   }
 

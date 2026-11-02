@@ -13,17 +13,17 @@ import type {Cell} from './protocol';
 import {WriterLocks,type WriterLease} from './writer-lock';
 import {defaultPythonPath} from './python-path';
 
-interface Settings {pythonPath: string;associatePython:boolean;renderMarkdown:boolean;autoConnect:boolean;aiBaseUrl:string;aiApiKey:string;aiModel:string}
+interface Settings {pythonPath: string;associatePython:boolean;renderMarkdown:boolean;autoConnect:boolean;aiBaseUrl:string;aiApiKey:string;aiModel:string;openDockViews:string[]}
 export default class MarimoPlugin extends Plugin {
-  settings: Settings = {pythonPath:'',associatePython:true,renderMarkdown:true,autoConnect:true,aiBaseUrl:'',aiApiKey:'',aiModel:''};
+  settings: Settings = {pythonPath:'',associatePython:true,renderMarkdown:true,autoConnect:true,aiBaseUrl:'',aiApiKey:'',aiModel:'',openDockViews:['marimo-native-outline']};
   private associationStatus='';
   recovery!:RecoveryStore;
   private writers = new WriterLocks();
   t(zh: string, en: string): string {return getLanguage().toLowerCase().startsWith('zh') ? zh : en;}
   async onload(): Promise<void> {
     const fallback=this.defaultPython();
-    const saved=await this.loadData();
-    this.settings={pythonPath:normalizePython(saved?.pythonPath,existsSync(fallback)?fallback:'python3'),associatePython:saved?.associatePython!==false,renderMarkdown:saved?.renderMarkdown!==false,autoConnect:saved?.autoConnect!==false,aiBaseUrl:String(saved?.aiBaseUrl??''),aiApiKey:String(saved?.aiApiKey??''),aiModel:String(saved?.aiModel??'')};
+    const savedSettings=await this.loadData();
+    this.settings={pythonPath:normalizePython(savedSettings?.pythonPath,existsSync(fallback)?fallback:'python3'),associatePython:savedSettings?.associatePython!==false,renderMarkdown:savedSettings?.renderMarkdown!==false,autoConnect:savedSettings?.autoConnect!==false,aiBaseUrl:String(savedSettings?.aiBaseUrl??''),aiApiKey:String(savedSettings?.aiApiKey??''),aiModel:String(savedSettings?.aiModel??''),openDockViews:Array.isArray(savedSettings?.openDockViews)?savedSettings.openDockViews.map(String):['marimo-native-outline']};
     this.recovery=new RecoveryStore(join(homedir(),'.local','state','obsidian-marimo','drafts',createHash('sha256').update(this.absoluteRoot()).digest('hex')));
     this.registerView(VIEW_TYPE,leaf=>new MarimoView(leaf,this));
     // marimo's outline lives in Obsidian's right dock, next to the core
@@ -32,29 +32,26 @@ export default class MarimoPlugin extends Plugin {
     this.registerView(VIEW_TYPE_VARIABLES,leaf=>new MarimoVariablesView(leaf,this));
     // marimo's chat panel, docked in Obsidian's sidebar.
     this.registerView(VIEW_TYPE_CHAT,leaf=>new MarimoChatView(leaf,this));
-    this.addCommand({id:'open-marimo-chat',name:this.t('打开 marimo AI 对话','Open marimo AI chat'),callback:()=>{
-      const existing=this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT)[0];
-      const leaf=existing??this.app.workspace.getRightLeaf(false);
-      if(!leaf)return;
-      const done=existing?Promise.resolve():leaf.setViewState({type:VIEW_TYPE_CHAT,active:true});
-      void done.then(()=>this.app.workspace.revealLeaf(leaf));
-    }});
-    this.addCommand({id:'open-marimo-outline',name:this.t('打开 marimo 大纲','Open marimo outline'),callback:()=>{
-      // Reuse the pane if it exists; a second command press must not stack
-      // another empty leaf into the right dock.
-      const existing=this.app.workspace.getLeavesOfType(VIEW_TYPE_OUTLINE)[0];
-      const leaf=existing??this.app.workspace.getRightLeaf(false);
-      if(!leaf)return;
-      const done=existing?Promise.resolve():leaf.setViewState({type:VIEW_TYPE_OUTLINE,active:true});
-      void done.then(()=>this.app.workspace.revealLeaf(leaf));
-    }});
-    this.addCommand({id:'open-marimo-variables',name:this.t('打开 marimo 变量面板','Open marimo variables'),callback:()=>{
-      const existing=this.app.workspace.getLeavesOfType(VIEW_TYPE_VARIABLES)[0];
-      const leaf=existing??this.app.workspace.getRightLeaf(false);
-      if(!leaf)return;
-      const done=existing?Promise.resolve():leaf.setViewState({type:VIEW_TYPE_VARIABLES,active:true});
-      void done.then(()=>this.app.workspace.revealLeaf(leaf));
-    }});
+    const openDock=(type:string):void=>{void this.openDockView(type);};
+    this.addCommand({id:'open-marimo-chat',name:this.t('打开 marimo AI 对话','Open marimo AI chat'),callback:()=>openDock(VIEW_TYPE_CHAT)});
+    this.addCommand({id:'open-marimo-outline',name:this.t('打开 marimo 大纲','Open marimo outline'),callback:()=>openDock(VIEW_TYPE_OUTLINE)});
+    this.addCommand({id:'open-marimo-variables',name:this.t('打开 marimo 变量面板','Open marimo variables'),callback:()=>openDock(VIEW_TYPE_VARIABLES)});
+    // Obsidian drops custom dock leaves when the plugin reloads or quits
+    // before saving the workspace, so the remembered panels are re-opened
+    // once the layout exists. Closing a panel prunes it from the list.
+    // The restore waits for Obsidian to finish replaying its own workspace
+    // state, and a dedupe pass collapses any double leaves that race creates.
+    this.app.workspace.onLayoutReady(()=>{window.setTimeout(()=>this.restoreDockViews(),1500);});
+    this.registerEvent(this.app.workspace.on('layout-change',()=>{
+      const kept=this.settings.openDockViews.filter(type=>{
+        let found=false;
+        this.app.workspace.iterateAllLeaves(leaf=>{if(leaf.getViewState().type===type)found=true;});
+        return found;
+      });
+      if(kept.length===this.settings.openDockViews.length)return;
+      this.settings.openDockViews=kept;
+      void this.saveData(this.settings);
+    }));
     // Escape hatch for the native features this frontend does not rebuild;
     // the adapter keeps the access token, so nothing secret reaches the UI.
     this.addCommand({id:'open-marimo-in-browser',name:this.t('在浏览器打开原生 marimo 编辑器','Open native marimo editor in browser'),callback:()=>{
@@ -118,7 +115,44 @@ export default class MarimoPlugin extends Plugin {
     return defaultPythonPath({platform:process.platform,home:homedir(),exists:existsSync});
   }
   getPythonPath():string {return normalizePython(this.settings.pythonPath,this.defaultPython());}
-  async onExternalSettingsChange(): Promise<void> {const saved=await this.loadData();this.settings={pythonPath:normalizePython(saved?.pythonPath,this.settings.pythonPath),associatePython:saved?.associatePython!==false,renderMarkdown:saved?.renderMarkdown!==false,autoConnect:saved?.autoConnect!==false,aiBaseUrl:String(saved?.aiBaseUrl??this.settings.aiBaseUrl),aiApiKey:String(saved?.aiApiKey??this.settings.aiApiKey),aiModel:String(saved?.aiModel??this.settings.aiModel)};}
+  async onExternalSettingsChange(): Promise<void> {const saved=await this.loadData();this.settings={pythonPath:normalizePython(saved?.pythonPath,this.settings.pythonPath),associatePython:saved?.associatePython!==false,renderMarkdown:saved?.renderMarkdown!==false,autoConnect:saved?.autoConnect!==false,aiBaseUrl:String(saved?.aiBaseUrl??this.settings.aiBaseUrl),aiApiKey:String(saved?.aiApiKey??this.settings.aiApiKey),aiModel:String(saved?.aiModel??this.settings.aiModel),openDockViews:Array.isArray(saved?.openDockViews)?saved.openDockViews.map(String):this.settings.openDockViews};}
+  /** Re-open remembered sidebar panels and collapse any racing duplicates. */
+  private restoreDockViews(): void {
+    const hasLeaf=(type:string):boolean=>{
+      let found=false;
+      this.app.workspace.iterateAllLeaves(leaf=>{if(leaf.getViewState().type===type)found=true;});
+      return found;
+    };
+    for(const type of this.settings.openDockViews){
+      if(hasLeaf(type))continue;
+      const leaf=this.app.workspace.getRightLeaf(false);
+      if(!leaf)continue;
+      void leaf.setViewState({type,active:false});
+    }
+    // Obsidian may replay its saved layout after we restore; extra leaves of
+    // the same panel would stack, so keep the first of each type only.
+    window.setTimeout(()=>{
+      for(const type of this.settings.openDockViews){
+        const leaves=this.app.workspace.getLeavesOfType(type);
+        for(const extra of leaves.slice(1))extra.detach();
+      }
+    },1000);
+  }
+  /**
+   * Open (or reveal) a sidebar panel and remember it, so it survives the
+   * plugin reloads that Obsidian uses to apply updates and settings changes.
+   */
+  private async openDockView(type:string): Promise<void> {
+    const existing=this.app.workspace.getLeavesOfType(type)[0];
+    const leaf=existing??this.app.workspace.getRightLeaf(false);
+    if(!leaf)return;
+    if(!existing)await leaf.setViewState({type,active:true});
+    this.app.workspace.revealLeaf(leaf);
+    if(!this.settings.openDockViews.includes(type)){
+      this.settings.openDockViews=[...this.settings.openDockViews,type];
+      await this.saveData(this.settings);
+    }
+  }
   async openFile(file:TFile): Promise<void> {
     const existing=this.app.workspace.getLeavesOfType(VIEW_TYPE).find(leaf=>!leaf.isDeferred&&leaf.view instanceof MarimoView&&!leaf.view.isClosed()&&leaf.view.getState().filename===file.path);
     if(existing){await this.app.workspace.revealLeaf(existing);return;}

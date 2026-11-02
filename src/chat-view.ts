@@ -34,6 +34,12 @@ export class MarimoChatView extends ItemView {
   async onOpen(): Promise<void> {
     const workspace: Events = this.app.workspace;
     this.registerEvent(workspace.on('active-leaf-change',()=>this.refreshHeader()));
+    // The workspace may restore notebook leaves after this panel opens.
+    let layoutTimer: ReturnType<typeof setTimeout>|null=null;
+    this.registerEvent(workspace.on('layout-change',()=>{
+      if(layoutTimer)clearTimeout(layoutTimer);
+      layoutTimer=setTimeout(()=>{layoutTimer=null;this.refreshHeader();},300);
+    }));
     this.contentEl.empty();
     this.contentEl.addClass('marimo-chat');
     const header=this.contentEl.createDiv({cls:'marimo-chat-header'});

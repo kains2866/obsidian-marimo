@@ -3,22 +3,27 @@ import {VIEW_TYPE, MarimoView} from './view';
 import type MarimoPlugin from './main';
 
 /**
- * marimo's outline, dependencies and minimap, docked in Obsidian's sidebar.
+ * marimo's outline and DEPENDENCIES panel, docked in Obsidian's sidebar.
  *
  * Obsidian's core Outline view only reads heading caches that the metadata
  * indexer builds for markdown files — there is no public way to feed it
  * entries from a custom view. So this view takes the native outline's *place*
- * instead: same dock position, and (like the native marimo sidebar) tabs for
- * the outline tree, the per-cell dataflow (DEPENDENCIES) and a compact
- * notebook map (MINIMAP).
+ * instead: same dock position, and (like native marimo) a DEPENDENCIES tab
+ * with the MINIMAP | GRAPH toggle — the compact cell list and the cell-card
+ * tree, styled after marimo's own sidebar.
  */
 export const VIEW_TYPE_OUTLINE = 'marimo-native-outline';
 
-type Tab = 'outline'|'deps'|'map';
+type Tab = 'outline'|'deps';
+type DepsMode = 'minimap'|'graph';
+
+const DEPS_MODE_KEY = 'marimo-deps-mode';
 
 export class MarimoOutlineView extends ItemView {
   private tab: Tab = 'outline';
+  private depsMode: DepsMode = 'minimap';
   private tabbar!: HTMLElement;
+  private toolbar: HTMLElement|null = null;
   private body!: HTMLElement;
 
   constructor(leaf: WorkspaceLeaf, private plugin: MarimoPlugin) {
@@ -36,6 +41,11 @@ export class MarimoOutlineView extends ItemView {
     const workspace: Events = this.app.workspace;
     this.registerEvent(workspace.on('marimo-outline-changed',()=>this.sync()));
     this.registerEvent(workspace.on('active-leaf-change',()=>this.sync()));
+    // Selection changes arrive per keystroke of focus — highlight in place
+    // instead of rebuilding the list.
+    this.registerEvent(workspace.on('marimo-selection-changed',(cellId:string|null)=>{
+      this.highlightSelection(cellId);
+    }));
     // The workspace may restore notebook leaves after this panel opens; a
     // layout change then means "maybe my notebook just appeared".
     let layoutTimer: ReturnType<typeof setTimeout>|null=null;
@@ -43,14 +53,15 @@ export class MarimoOutlineView extends ItemView {
       if(layoutTimer)clearTimeout(layoutTimer);
       layoutTimer=setTimeout(()=>{layoutTimer=null;this.sync();},300);
     }));
+    const saved=localStorage.getItem(DEPS_MODE_KEY);
+    if(saved==='minimap'||saved==='graph')this.depsMode=saved;
     const content=this.contentEl;
     content.empty();
     content.addClass('marimo-outline-pane');
     this.tabbar=content.createDiv({cls:'marimo-outline-tabs'});
     for(const entry of [
       {tab:'outline' as Tab,zh:'大纲',en:'Outline'},
-      {tab:'deps' as Tab,zh:'依赖',en:'Deps'},
-      {tab:'map' as Tab,zh:'地图',en:'Map'},
+      {tab:'deps' as Tab,zh:'依赖',en:'Dependencies'},
     ]) {
       const button=this.tabbar.createEl('button',{cls:'marimo-outline-tab',text:this.plugin.t(entry.zh,entry.en)});
       button.dataset.tab=entry.tab;
@@ -73,14 +84,14 @@ export class MarimoOutlineView extends ItemView {
     }
     const body=this.body;
     body.empty();
+    this.toolbar=null;
     const notebook=this.activeNotebook();
     if(!notebook) {
       body.createDiv({cls:'marimo-outline-empty',text:this.plugin.t('打开 marimo notebook 后，这里显示它的大纲。','Open a marimo notebook to see its outline here.')});
       return;
     }
     if(this.tab==='outline')this.renderOutline(body,notebook);
-    else if(this.tab==='deps')this.renderDeps(body,notebook);
-    else this.renderMap(body,notebook);
+    else this.renderDeps(body,notebook);
   }
 
   private jumpTo(notebook:MarimoView,cellId:string):void {
@@ -108,63 +119,116 @@ export class MarimoOutlineView extends ItemView {
     }
   }
 
-  /** First meaningful line of a cell, as the dependency row's label. */
+  /** First meaningful line of a cell, as the row's label. */
   private cellLabel(notebook:MarimoView,cellId:string):string {
     const code=notebook.cellSource(cellId);
     const line=code.split('\n').map(entry=>entry.trim()).find(entry=>entry.length>0);
-    return line??this.plugin.t('（空）','(empty)');
+    return line??'';
+  }
+
+  /** The MINIMAP | GRAPH segmented toggle, styled after marimo's own. */
+  private renderDepsToolbar(body:HTMLElement):void {
+    const bar=body.createDiv({cls:'marimo-deps-toolbar'});
+    bar.createSpan({cls:'marimo-deps-title',text:'DEPENDENCIES'});
+    const toggle=bar.createDiv({cls:'marimo-deps-toggle'});
+    for(const mode of [
+      {mode:'minimap' as DepsMode,label:'MINIMAP'},
+      {mode:'graph' as DepsMode,label:'GRAPH'},
+    ]) {
+      const button=toggle.createEl('button',{cls:'marimo-deps-mode',text:mode.label});
+      button.dataset.mode=mode.mode;
+      button.classList.toggle('is-active',this.depsMode===mode.mode);
+      button.onclick=()=>{
+        this.depsMode=mode.mode;
+        localStorage.setItem(DEPS_MODE_KEY,mode.mode);
+        this.sync();
+      };
+    }
+    this.toolbar=bar;
   }
 
   private renderDeps(body:HTMLElement,notebook:MarimoView):void {
-    const deps=notebook.currentCellDeps();
-    let edges=0;
-    for(const entry of deps.values())edges+=entry.inputs.length+entry.outputs.length;
-    if(!deps.size||!edges) {
-      body.createDiv({cls:'marimo-outline-empty',text:this.plugin.t('连接并运行后，这里显示每个单元格定义和读取的变量。','Connect and run to see what each cell defines and reads.')});
+    this.renderDepsToolbar(body);
+    if(!notebook.cells.length) {
+      body.createDiv({cls:'marimo-outline-empty',text:this.plugin.t('此 notebook 暂无单元格。','This notebook has no cells yet.')});
       return;
     }
-    for(const cell of notebook.cells) {
-      const entry=deps.get(cell.id);
-      if(!entry)continue;
-      const row=body.createEl('button',{cls:'marimo-dep-cell'});
-      row.createDiv({cls:'marimo-dep-label',text:this.cellLabel(notebook,cell.id)});
-      row.onclick=()=>this.jumpTo(notebook,cell.id);
-      if(entry.outputs.length) {
-        const line=row.createDiv({cls:'marimo-dep-line'});
-        line.createSpan({cls:'marimo-dep-kind',text:this.plugin.t('输出','out')});
-        for(const name of entry.outputs)line.createSpan({cls:'marimo-dep-chip is-output',text:name});
-      }
-      if(entry.inputs.length) {
-        const line=row.createDiv({cls:'marimo-dep-line'});
-        line.createSpan({cls:'marimo-dep-kind',text:this.plugin.t('输入','in')});
-        for(const name of entry.inputs)line.createSpan({cls:'marimo-dep-chip is-input',text:name});
-      }
-      if(!entry.outputs.length&&!entry.inputs.length) {
-        row.createDiv({cls:'marimo-dep-line marimo-dep-none',text:this.plugin.t('无依赖','no variables')});
-      }
-    }
+    if(this.depsMode==='minimap')this.renderMinimap(body,notebook);
+    else this.renderGraph(body,notebook);
   }
 
   /**
-   * The minimap: one slim block per cell, its height following the code
-   * length, colored by kind (markdown / error), the selected cell outlined.
+   * MINIMAP: marimo's compact list — one slim row per cell with its index,
+   * a dot, and the first line of code in muted monospace.
    */
-  private renderMap(body:HTMLElement,notebook:MarimoView):void {
-    const strip=body.createDiv({cls:'marimo-minimap'});
-    strip.setAttr('aria-label',notebook.file?.name??'');
+  private renderMinimap(body:HTMLElement,notebook:MarimoView):void {
+    const list=body.createDiv({cls:'marimo-minimap'});
+    list.setAttr('aria-label',notebook.file?.name??'');
     const selection=notebook.getSelectedCellId();
-    for(const cell of notebook.cells) {
+    notebook.cells.forEach((cell,index)=>{
+      const label=this.cellLabel(notebook,cell.id);
+      const row=list.createEl('button',{cls:'marimo-minimap-row'});
+      row.dataset.cellId=cell.id;
+      row.createSpan({cls:'marimo-minimap-index',text:String(index)});
+      row.createSpan({cls:'marimo-minimap-dot'});
+      row.createSpan({cls:'marimo-minimap-code',text:label||this.plugin.t('empty','empty')});
+      if(!label)row.addClass('is-empty');
+      if(notebook.isMarkdownCell(cell.id))row.addClass('is-markdown');
+      if(notebook.hasCellError(cell.id))row.addClass('is-error');
+      if(cell.id===selection)row.addClass('is-selected');
+      row.setAttr('aria-label',label.slice(0,80)||cell.id);
+      row.onclick=()=>this.jumpTo(notebook,cell.id);
+    });
+  }
+
+  /**
+   * GRAPH: marimo's vertical cell tree — one rounded card per cell (a header
+   * bar with the cell name, the first line of code beneath it), cards linked
+   * by a slim connector.
+   */
+  private renderGraph(body:HTMLElement,notebook:MarimoView):void {
+    const graph=body.createDiv({cls:'marimo-graph'});
+    const selection=notebook.getSelectedCellId();
+    let selectedEl: HTMLElement|null=null;
+    notebook.cells.forEach((cell,index)=>{
+      if(index>0) {
+        const link=graph.createDiv({cls:'marimo-graph-link'});
+        link.createSpan({cls:'marimo-graph-node'});
+      }
       const code=notebook.cellSource(cell.id);
-      const lines=Math.max(1,code.split('\n').length);
-      const block=strip.createDiv({cls:'marimo-minimap-block'});
-      block.style.flexGrow=String(Math.min(lines,12));
-      const isMarkdown=notebook.isMarkdownCell(cell.id);
-      if(isMarkdown)block.addClass('is-markdown');
-      if(notebook.hasCellError(cell.id))block.addClass('is-error');
-      if(cell.id===selection)block.addClass('is-selected');
-      const label=this.cellLabel(notebook,cell.id).slice(0,60);
-      block.setAttr('aria-label',label);
-      block.onclick=()=>this.jumpTo(notebook,cell.id);
-    }
+      const label=this.cellLabel(notebook,cell.id);
+      const card=graph.createEl('button',{cls:'marimo-graph-card'});
+      card.dataset.cellId=cell.id;
+      card.createDiv({cls:'marimo-graph-head',text:cell.id});
+      card.createDiv({cls:'marimo-graph-code',text:label||this.plugin.t('empty','empty')});
+      if(!label)card.addClass('is-empty');
+      if(notebook.isMarkdownCell(cell.id))card.addClass('is-markdown');
+      if(notebook.hasCellError(cell.id))card.addClass('is-error');
+      if(cell.id===selection) {
+        card.addClass('is-selected');
+        selectedEl=card;
+      }
+      card.setAttr('aria-label',(cell.id+' · '+label).slice(0,120));
+      card.onclick=()=>this.jumpTo(notebook,cell.id);
+    });
+    // Follow the notebook's selection like the native graph highlights the
+    // active node: bring the selected card into view after render.
+    if(selectedEl)requestAnimationFrame(()=>selectedEl!.scrollIntoView({block:'nearest'}));
+  }
+
+  /**
+   * Selection changed in the notebook: move the highlight in place. Full
+   * re-renders would fight the user's scroll position on every click.
+   */
+  private highlightSelection(cellId:string|null):void {
+    if(this.tab!=='deps'||!this.body)return;
+    const items=this.body.querySelectorAll<HTMLElement>('.marimo-minimap-row,.marimo-graph-card');
+    let selected: HTMLElement|null=null;
+    items.forEach(item=>{
+      const active=cellId!==null&&item.dataset.cellId===cellId;
+      item.classList.toggle('is-selected',active);
+      if(active)selected=item;
+    });
+    if(selected)selected.scrollIntoView({block:'nearest'});
   }
 }

@@ -1307,6 +1307,9 @@ export class MarimoView extends EditableFileView {
     if(this.selectedId===id && !force) return;
     this.selectedId=id;
     this.body.querySelectorAll<HTMLElement>('.marimo-native-cell').forEach(row=>{row.toggleClass('is-selected',row.dataset.cellId===id);});
+    // Dock panels (outline/dependencies) follow the selection without a full
+    // re-render: they listen for this event and toggle highlight classes.
+    this.app.workspace.trigger('marimo-selection-changed',id);
   }
 
   // ------------------------------------------------------- cell structure

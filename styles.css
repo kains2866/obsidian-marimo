@@ -743,6 +743,24 @@
   font-size: var(--font-ui-small);
 }
 
+/* ------------------------------------------------------ AI generate prompt */
+
+.marimo-ai-prompt .marimo-ai-hint {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  margin-bottom: 8px;
+}
+.marimo-ai-prompt textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+}
+.marimo-ai-prompt .marimo-ai-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
 /* ------------------------------------------------------------ interaction */
 
 .marimo-native button:focus-visible {

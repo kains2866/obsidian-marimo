@@ -1,4 +1,4 @@
-import {EditableFileView, MarkdownRenderer, Notice, Platform, Scope, sanitizeHTMLToDom, setIcon, type WorkspaceLeaf, type TFile, type ViewStateResult} from 'obsidian';
+import {EditableFileView, MarkdownRenderer, Modal, Notice, Platform, Scope, sanitizeHTMLToDom, setIcon, type WorkspaceLeaf, type TFile, type ViewStateResult} from 'obsidian';
 import {EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter} from '@codemirror/view';
 import {Compartment, EditorState} from '@codemirror/state';
 import {python} from '@codemirror/lang-python';
@@ -12,6 +12,7 @@ import {nativeHighlight} from './editor-theme';
 import {isErrorOutput, isStdinOutput, safeOutput, type BackendMessage, type Cell} from './protocol';
 import {isAllowedImageSource, adaptMarimoTex, isBlockedAttribute, isBlockedElement} from './output-policy';
 import {encodeMarkdownCell, outlineEntries, parseMarkdownCell} from './markdown-cell';
+import {generateCellCode} from './ai';
 import {cellTemplate, type CellKind} from './cell-templates';
 import {canAdoptClaim, cellActions, connectionState, environmentLabel, normalizeCellStatus, shouldApplyResult, shouldApplyStopResult, showPrototypeInfo, statusView, toolbarAvailability, type CellStatus, type ConnectionState, type RunPhase} from './status';
 import {fileFromViewState} from './file-state';
@@ -1150,14 +1151,14 @@ export class MarimoView extends EditableFileView {
   }
 
   /** Insert an empty cell after `afterId`; with no selection it goes last. */
-  private async insertAfter(afterId:string|null, kind:CellKind='python'):Promise<void> {
+  private async insertAfter(afterId:string|null, kind:CellKind='python'):Promise<string|null> {
     const backend=this.backend;
-    if(!backend||!this.canEditStructure())return;
+    if(!backend||!this.canEditStructure())return null;
     const operation=++this.operation;
     this.busy=true;this.updateControls();
     try {
       const created=await backend.request('create');
-      if(!shouldApplyResult({backend,operation},{backend:this.backend,operation:this.operation}))return;
+      if(!shouldApplyResult({backend,operation},{backend:this.backend,operation:this.operation}))return null;
       const id=created.cellId;
       if(!id)throw new Error(this.plugin.t('适配层未返回单元格标识','The adapter did not return a cell id'));
       const cells=this.readCells();
@@ -1188,8 +1189,10 @@ export class MarimoView extends EditableFileView {
       }
       this.editors.get(id)?.view.focus();
       this.refreshOutline();
+      return id;
     } catch(error) {
       this.structureFailed(backend,operation,error);
+      return null;
     } finally {
       if(operation===this.operation){this.busy=false;if(!this.closed)this.updateControls();}
     }
@@ -1217,12 +1220,71 @@ export class MarimoView extends EditableFileView {
     item('file-code',this.plugin.t('Python 单元格','Python cell'),'python');
     item('file-text',this.plugin.t('Markdown 单元格','Markdown cell'),'markdown');
     item('database',this.plugin.t('SQL 单元格','SQL cell'),'sql');
+    if(this.plugin.settings.aiBaseUrl&&this.plugin.settings.aiApiKey) {
+      const ai=menu.createEl('button',{cls:'marimo-native-cell-menu-item'});
+      ai.dataset.menuAction='insert-ai';
+      ai.setAttribute('role','menuitem');
+      setIcon(ai,'sparkles');
+      ai.createSpan({text:this.plugin.t('AI 生成单元格','Generate with AI')});
+      ai.onclick=event=>{event.stopPropagation();this.closeCellMenu();this.promptAI(afterId);};
+    }
     this.cellMenu=menu;
     this.placeFloatingMenu(menu);
     this.menuDismiss=(event:Event)=>{if(!menu.contains(event.target as Node))this.closeCellMenu();};
     document.addEventListener('pointerdown',this.menuDismiss,{capture:true});
     document.addEventListener('keydown',this.menuKey,{capture:true});
     document.addEventListener('scroll',this.menuDismiss,{capture:true});
+  }
+
+  /** The creation bar's GENERATE WITH AI: describe a cell, get a cell. */
+  private promptAI(afterId:string|null): void {
+    const modal=new Modal(this.app);
+    modal.contentEl.addClass('marimo-ai-prompt');
+    modal.contentEl.createDiv({cls:'marimo-ai-hint',text:this.plugin.t('描述你要的单元格，将生成一个 Python 单元格并运行。','Describe the cell you want; one Python cell is generated and run.')});
+    const input=modal.contentEl.createEl('textarea');
+    input.placeholder=this.plugin.t('例如：一个滑块控制正弦波频率的图表','e.g. a slider that controls the frequency of a sine plot');
+    const actions=modal.contentEl.createDiv({cls:'marimo-ai-actions'});
+    const go=actions.createEl('button',{text:this.plugin.t('生成','Generate'),cls:'mod-cta'});
+    go.onclick=()=>{
+      const prompt=input.value.trim();
+      if(!prompt)return;
+      modal.close();
+      void this.generateWithAI(afterId,prompt);
+    };
+    input.addEventListener('keydown',event=>{
+      if(event.key==='Enter'&&(event.ctrlKey||event.metaKey))go.click();
+    });
+    modal.open();
+    input.focus();
+  }
+
+  /** Create the cell, ask the configured endpoint, fill and run it. */
+  async generateWithAI(afterId:string|null, prompt:string): Promise<void> {
+    const settings=this.plugin.settings;
+    if(!settings.aiBaseUrl||!settings.aiApiKey) {
+      new Notice(this.plugin.t('请先在设置中配置 AI 端点与密钥。','Configure an AI endpoint and key in the settings first.'));
+      return;
+    }
+    const id=await this.insertAfter(afterId,'python');
+    if(!id)return;
+    const editor=this.editors.get(id)?.view;
+    if(!editor)return;
+    const notice=new Notice(this.plugin.t('AI 生成中…','Generating with AI…'),0);
+    try {
+      const context=this.cells
+        .map(cell=>this.editors.get(cell.id)?.view.state.doc.toString()??cell.code)
+        .join('\n\n')
+        .slice(-4000);
+      const code=await generateCellCode(
+        {baseUrl:settings.aiBaseUrl,apiKey:settings.aiApiKey,model:settings.aiModel||'gpt-4o-mini'},
+        prompt,context);
+      editor.dispatch({changes:{from:0,to:editor.state.doc.length,insert:code}});
+      notice.hide();
+      await this.runCell(id);
+    } catch(error) {
+      notice.hide();
+      new Notice(String(error));
+    }
   }
 
   /** The outline lives in Obsidian's right dock; notify it of any change. */

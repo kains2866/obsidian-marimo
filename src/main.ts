@@ -10,9 +10,9 @@ import {NOTEBOOK_TEMPLATE, nextNotebookPath} from './notebook-file';
 import type {Cell} from './protocol';
 import {WriterLocks,type WriterLease} from './writer-lock';
 
-interface Settings {pythonPath: string;associatePython:boolean;renderMarkdown:boolean;autoConnect:boolean}
+interface Settings {pythonPath: string;associatePython:boolean;renderMarkdown:boolean;autoConnect:boolean;aiBaseUrl:string;aiApiKey:string;aiModel:string}
 export default class MarimoPlugin extends Plugin {
-  settings: Settings = {pythonPath:'',associatePython:true,renderMarkdown:true,autoConnect:true};
+  settings: Settings = {pythonPath:'',associatePython:true,renderMarkdown:true,autoConnect:true,aiBaseUrl:'',aiApiKey:'',aiModel:''};
   private associationStatus='';
   recovery!:RecoveryStore;
   private writers = new WriterLocks();
@@ -20,7 +20,7 @@ export default class MarimoPlugin extends Plugin {
   async onload(): Promise<void> {
     const fallback=join(homedir(),'.local','share','uv','tools','marimo','bin','python');
     const saved=await this.loadData();
-    this.settings={pythonPath:normalizePython(saved?.pythonPath,existsSync(fallback)?fallback:'python3'),associatePython:saved?.associatePython!==false,renderMarkdown:saved?.renderMarkdown!==false,autoConnect:saved?.autoConnect!==false};
+    this.settings={pythonPath:normalizePython(saved?.pythonPath,existsSync(fallback)?fallback:'python3'),associatePython:saved?.associatePython!==false,renderMarkdown:saved?.renderMarkdown!==false,autoConnect:saved?.autoConnect!==false,aiBaseUrl:String(saved?.aiBaseUrl??''),aiApiKey:String(saved?.aiApiKey??''),aiModel:String(saved?.aiModel??'')};
     this.recovery=new RecoveryStore(join(homedir(),'.local','state','obsidian-marimo','drafts',createHash('sha256').update(this.absoluteRoot()).digest('hex')));
     this.registerView(VIEW_TYPE,leaf=>new MarimoView(leaf,this));
     // marimo's outline lives in Obsidian's right dock, next to the core
@@ -65,11 +65,14 @@ export default class MarimoPlugin extends Plugin {
         {name:plugin.t('自动渲染 Markdown 单元格','Auto-render markdown cells'),desc:plugin.t('单个 mo.md(...) 调用的单元格直接以 Obsidian 排版显示（公式、内链、嵌入），Python 代码折叠，点击预览即可编辑。更改后重新加载插件生效。','A cell that is a single mo.md(...) call renders with Obsidian markdown (math, links, embeds) with the Python code folded; click the preview to edit. Reload the plugin to apply.'),control:{type:'toggle',key:'renderMarkdown',defaultValue:true}},
         {name:plugin.t('点击 Python 文件打开','Open Python files on click'),desc:plugin.associationStatus+' '+plugin.t('文件以只读预览打开，连接后才会执行代码。更改后重新加载插件生效。','Files open as a read-only preview; code only runs after you connect. Changes take effect after reloading the plugin.'),control:{type:'toggle',key:'associatePython',defaultValue:true}},
         {name:plugin.t('marimo Python 路径','marimo Python path'),desc:plugin.t('须安装 marimo 0.25.2，其他版本会被拒绝。连接时仅在本机回环地址启动带认证的服务，断开或关闭页面即结束该进程。','Requires marimo 0.25.2; other versions are rejected. Connecting starts an authenticated loopback-only service that is stopped when you disconnect or close the view.'),control:{type:'text',key:'pythonPath',defaultValue:fallback}},
+        {name:plugin.t('AI 端点（OpenAI 兼容）','AI endpoint (OpenAI-compatible)'),desc:plugin.t('创建条的「AI 生成」用。例如 https://api.openai.com/v1；留空则隐藏该入口。','Used by "Generate with AI" in the creation bar, e.g. https://api.openai.com/v1. Leave empty to hide the entry.'),control:{type:'text',key:'aiBaseUrl',defaultValue:''}},
+        {name:plugin.t('AI 密钥','AI key'),desc:plugin.t('以 Bearer 头发送到上面的端点；仅存于本地配置。','Sent as a Bearer header to the endpoint above; stored in local config only.'),control:{type:'text',key:'aiApiKey',defaultValue:''}},
+        {name:plugin.t('AI 模型','AI model'),desc:plugin.t('例如 gpt-4o-mini。','e.g. gpt-4o-mini.'),control:{type:'text',key:'aiModel',defaultValue:''}},
       ];}
     }(this.app,this));
   }
   getPythonPath():string {const fallback=join(homedir(),'.local','share','uv','tools','marimo','bin','python');return normalizePython(this.settings.pythonPath,existsSync(fallback)?fallback:'python3');}
-  async onExternalSettingsChange(): Promise<void> {const saved=await this.loadData();this.settings={pythonPath:normalizePython(saved?.pythonPath,this.settings.pythonPath),associatePython:saved?.associatePython!==false,renderMarkdown:saved?.renderMarkdown!==false,autoConnect:saved?.autoConnect!==false};}
+  async onExternalSettingsChange(): Promise<void> {const saved=await this.loadData();this.settings={pythonPath:normalizePython(saved?.pythonPath,this.settings.pythonPath),associatePython:saved?.associatePython!==false,renderMarkdown:saved?.renderMarkdown!==false,autoConnect:saved?.autoConnect!==false,aiBaseUrl:String(saved?.aiBaseUrl??this.settings.aiBaseUrl),aiApiKey:String(saved?.aiApiKey??this.settings.aiApiKey),aiModel:String(saved?.aiModel??this.settings.aiModel)};}
   async openFile(file:TFile): Promise<void> {
     const existing=this.app.workspace.getLeavesOfType(VIEW_TYPE).find(leaf=>!leaf.isDeferred&&leaf.view instanceof MarimoView&&!leaf.view.isClosed()&&leaf.view.getState().filename===file.path);
     if(existing){await this.app.workspace.revealLeaf(existing);return;}

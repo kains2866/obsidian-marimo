@@ -10,7 +10,7 @@ import {insertCell, moveCell, nextCellId, removeCell, splitCellCode} from './cel
 import {cellPresentation, mergeCellConfig, readCellConfig, wireConfig, type CellConfig} from './cell-config';
 import {nativeHighlight} from './editor-theme';
 import {isErrorOutput, isStdinOutput, safeOutput, type BackendMessage, type Cell} from './protocol';
-import {isAllowedImageSource, adaptMarimoTex, isBlockedAttribute, isBlockedElement} from './output-policy';
+import {isAllowedImageSource, normalizeLinkpath, adaptMarimoTex, isBlockedAttribute, isBlockedElement} from './output-policy';
 import {encodeMarkdownCell, outlineEntries, parseMarkdownCell} from './markdown-cell';
 import {generateCellCode} from './ai';
 import {renderPlotly, renderVega} from './chart-embed';
@@ -1760,12 +1760,20 @@ export class MarimoView extends EditableFileView {
       const visibleText=!!fragment.textContent?.trim();
       const visibleStructure=extracted.widgets.length>0||!!fragment.querySelector('pre,table,ul,ol,blockquote,hr,figure,code,h1,h2,h3,h4,h5,h6,img,[data-widget-slot]');
       if(!visibleText && !visibleStructure) return;
-      // Inline raster data URLs survive; every other image source is dropped.
+      // Inline raster data URLs survive; a relative src gets one chance to
+      // resolve as a vault file (like the markdown preview does); anything
+      // else is dropped.
       fragment.querySelectorAll('img').forEach(image=>{
         const src=image.getAttribute('src');
-        if(!isAllowedImageSource(src)) {image.remove(); return;}
+        let resolved=src;
+        if(!isAllowedImageSource(src)) {
+          const linkpath=normalizeLinkpath(src);
+          const dest=linkpath?this.app.metadataCache.getFirstLinkpathDest(linkpath,this.filename):null;
+          resolved=dest?this.app.vault.getResourcePath(dest):null;
+        }
+        if(!resolved) {image.remove(); return;}
         for(const attr of Array.from(image.attributes)) if(attr.name!=='src'&&attr.name!=='alt') image.removeAttribute(attr.name);
-        image.setAttribute('src',(src??'').trim());
+        image.setAttribute('src',resolved.trim());
       });
       // Static-only: no scripts, remote resources or interactive components.
       fragment.querySelectorAll('*').forEach(node=>{if(node.tagName==='IMG')return;if(isBlockedElement(node.tagName))node.remove();});

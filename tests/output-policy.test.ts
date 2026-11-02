@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {adaptMarimoTex, isAllowedImageSource, isBlockedAttribute, isBlockedElement} from '../src/output-policy.ts';
+import {adaptMarimoTex, isAllowedImageSource, isBlockedAttribute, isBlockedElement, normalizeLinkpath} from '../src/output-policy.ts';
 
 test('marimo tex wrappers become dollar-delimited math text',()=>{
   assert.equal(
@@ -50,4 +50,11 @@ test('remote, vector and scripted image sources are refused',()=>{
   assert.equal(isAllowedImageSource('javascript:alert(1)'),false);
   assert.equal(isAllowedImageSource(null),false);
   assert.equal(isAllowedImageSource(''),false);
+});
+
+test('kernel image srcs normalise into vault linkpaths',()=>{
+  assert.equal(normalizeLinkpath('./assets/pic.png'),'assets/pic.png');
+  assert.equal(normalizeLinkpath('pic.png?v=2'),'pic.png');
+  assert.equal(normalizeLinkpath('/notes/a%20b.png#heading'),'notes/a b.png');
+  assert.equal(normalizeLinkpath('data:image/png;base64,AA=='),'data:image/png;base64,AA==');
 });

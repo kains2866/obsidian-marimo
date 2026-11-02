@@ -41,6 +41,30 @@ export function isAllowedImageSource(src: string | null | undefined): boolean {
 }
 
 /**
+ * Kernel HTML cannot know vault paths, but an `<img src>` that names a vault
+ * file should still load. Turn a raw src into a vault linkpath: percent
+ * decoding, `./` stripping, anchor and query removal. Data URLs pass through
+ * untouched (they never reach this function in the policy, but stay safe).
+ */
+export function normalizeLinkpath(src: string | null | undefined): string {
+  if (!src) return '';
+  const trimmed = src.trim();
+  if (trimmed.startsWith('data:')) return trimmed;
+  let linkpath = trimmed;
+  try {
+    linkpath = decodeURIComponent(trimmed);
+  } catch {
+    // A malformed escape keeps the raw text; getFirstLinkpathDest just fails.
+  }
+  linkpath = linkpath.replace(/^\.?\//, '');
+  const hash = linkpath.indexOf('#');
+  if (hash >= 0) linkpath = linkpath.slice(0, hash);
+  const query = linkpath.indexOf('?');
+  if (query >= 0) linkpath = linkpath.slice(0, query);
+  return linkpath;
+}
+
+/**
  * marimo renders LaTeX as `<marimo-tex>||(...||)</marimo-tex>`; the custom tag
  * cannot survive sanitization, so the delimiter form is unwrapped to plain
  * `$...$` / `$$...$$` text the reader can still parse.

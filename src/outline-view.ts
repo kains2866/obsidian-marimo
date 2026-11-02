@@ -43,8 +43,8 @@ export class MarimoOutlineView extends ItemView {
     this.registerEvent(workspace.on('active-leaf-change',()=>this.sync()));
     // Selection changes arrive per keystroke of focus — highlight in place
     // instead of rebuilding the list.
-    this.registerEvent(workspace.on('marimo-selection-changed',(cellId:string|null)=>{
-      this.highlightSelection(cellId);
+    this.registerEvent(workspace.on('marimo-selection-changed',(cellId: unknown)=>{
+      this.highlightSelection(typeof cellId==='string'?cellId:null);
     }));
     // The workspace may restore notebook leaves after this panel opens; a
     // layout change then means "maybe my notebook just appeared".
@@ -189,7 +189,7 @@ export class MarimoOutlineView extends ItemView {
   private renderGraph(body:HTMLElement,notebook:MarimoView):void {
     const graph=body.createDiv({cls:'marimo-graph'});
     const selection=notebook.getSelectedCellId();
-    let selectedEl: HTMLElement|null=null;
+    const selected: {el: HTMLElement|null} = {el: null};
     notebook.cells.forEach((cell,index)=>{
       if(index>0) {
         const link=graph.createDiv({cls:'marimo-graph-link'});
@@ -206,14 +206,15 @@ export class MarimoOutlineView extends ItemView {
       if(notebook.hasCellError(cell.id))card.addClass('is-error');
       if(cell.id===selection) {
         card.addClass('is-selected');
-        selectedEl=card;
+        selected.el=card;
       }
       card.setAttr('aria-label',(cell.id+' · '+label).slice(0,120));
       card.onclick=()=>this.jumpTo(notebook,cell.id);
     });
     // Follow the notebook's selection like the native graph highlights the
     // active node: bring the selected card into view after render.
-    if(selectedEl)requestAnimationFrame(()=>selectedEl!.scrollIntoView({block:'nearest'}));
+    const picked=selected.el as HTMLElement | null;
+    if(picked)requestAnimationFrame(()=>picked.scrollIntoView({block:'nearest'}));
   }
 
   /**
@@ -223,12 +224,12 @@ export class MarimoOutlineView extends ItemView {
   private highlightSelection(cellId:string|null):void {
     if(this.tab!=='deps'||!this.body)return;
     const items=this.body.querySelectorAll<HTMLElement>('.marimo-minimap-row,.marimo-graph-card');
-    let selected: HTMLElement|null=null;
+    const selected: HTMLElement[] = [];
     items.forEach(item=>{
       const active=cellId!==null&&item.dataset.cellId===cellId;
       item.classList.toggle('is-selected',active);
-      if(active)selected=item;
+      if(active)selected.push(item);
     });
-    if(selected)selected.scrollIntoView({block:'nearest'});
+    selected[0]?.scrollIntoView({block:'nearest'});
   }
 }

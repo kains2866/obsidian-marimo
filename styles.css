@@ -1234,3 +1234,11 @@
 .marimo-outline-pane .marimo-graph-card.is-error .marimo-graph-head { color: var(--text-error); }
 .marimo-outline-pane .marimo-graph-card.is-selected { border-color: var(--interactive-accent); box-shadow: 0 0 0 1px var(--interactive-accent); }
 .marimo-outline-pane .marimo-graph-card.is-empty .marimo-graph-code { opacity: .6; }
+
+/* ------------------------------------------ AI inline completion ghost text */
+
+.cm-inline-suggestion {
+  opacity: .4;
+  font-style: italic;
+  pointer-events: none;
+}

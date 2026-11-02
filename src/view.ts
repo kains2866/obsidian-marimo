@@ -12,7 +12,8 @@ import {nativeHighlight} from './editor-theme';
 import {isErrorOutput, isStdinOutput, safeOutput, type BackendMessage, type Cell} from './protocol';
 import {isAllowedImageSource, normalizeLinkpath, adaptMarimoTex, isBlockedAttribute, isBlockedElement} from './output-policy';
 import {encodeMarkdownCell, outlineEntries, parseMarkdownCell} from './markdown-cell';
-import {generateCellCode, refactorCellCode, type AIContext} from './ai';
+import {generateCellCode, refactorCellCode, fetchInlineCompletion, type AIContext} from './ai';
+import {inlineSuggestion} from './inline-complete';
 import {renderPlotly, renderVega} from './chart-embed';
 import {cellTemplate, type CellKind} from './cell-templates';
 import {canAdoptClaim, cellActions, connectionState, environmentLabel, normalizeCellStatus, shouldApplyResult, shouldApplyStopResult, showPrototypeInfo, statusView, toolbarAvailability, type CellStatus, type ConnectionState, type RunPhase} from './status';
@@ -808,7 +809,10 @@ export class MarimoView extends EditableFileView {
     const editable=new Compartment();
     // A markdown cell edits prose: no Python tokens, no kernel completion.
     const language=markdown?[]:[python(),autocompletion({override:[context=>this.completeAt(cell.id,context)],activateOnTyping:true})];
-    const editor=new EditorView({parent:host,state:EditorState.create({doc:markdown?markdown.markdown:cell.code,extensions:[editable.of([EditorState.readOnly.of(readOnly),EditorView.editable.of(!readOnly)]),...language,lineNumbers(),highlightActiveLine(),highlightActiveLineGutter(),history(),
+    // Ghost text needs an AI provider and an editable Python cell.
+    const inline=(!markdown&&!readOnly&&this.plugin.settings.aiInline&&this.plugin.settings.aiBaseUrl&&this.plugin.settings.aiApiKey)
+      ?[inlineSuggestion(({prefix,suffix})=>this.fetchInline(prefix,suffix))]:[];
+    const editor=new EditorView({parent:host,state:EditorState.create({doc:markdown?markdown.markdown:cell.code,extensions:[editable.of([EditorState.readOnly.of(readOnly),EditorView.editable.of(!readOnly)]),...language,...inline,lineNumbers(),highlightActiveLine(),highlightActiveLineGutter(),history(),
       // Notebook gestures come before the default keymap so Shift-Enter runs
       // instead of inserting a newline.
       keymap.of([
@@ -1511,6 +1515,21 @@ export class MarimoView extends EditableFileView {
       .join('\n\n')
       .slice(-6000);
     return {code,variables:this.currentVariables().map(({name,datatype,value})=>({name,datatype,value}))};
+  }
+
+  /**
+   * One ghost-text request. Suggestions are best-effort: any error resolves
+   * to no suggestion rather than a notice.
+   */
+  private async fetchInline(prefix: string, suffix: string): Promise<string|null> {
+    const settings=this.plugin.settings;
+    try {
+      return await fetchInlineCompletion(
+        {baseUrl:settings.aiBaseUrl,apiKey:settings.aiApiKey,model:settings.aiModel||'gpt-4o-mini'},
+        prefix,suffix);
+    } catch {
+      return null;
+    }
   }
 
   /** Create the cell, ask the configured endpoint, fill and run it. */

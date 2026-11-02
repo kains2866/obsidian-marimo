@@ -13,9 +13,9 @@ import type {Cell} from './protocol';
 import {WriterLocks,type WriterLease} from './writer-lock';
 import {defaultPythonPath} from './python-path';
 
-interface Settings {pythonPath: string;associatePython:boolean;renderMarkdown:boolean;autoConnect:boolean;aiBaseUrl:string;aiApiKey:string;aiModel:string;openDockViews:string[]}
+interface Settings {pythonPath: string;associatePython:boolean;renderMarkdown:boolean;autoConnect:boolean;aiBaseUrl:string;aiApiKey:string;aiModel:string;aiInline:boolean;openDockViews:string[]}
 export default class MarimoPlugin extends Plugin {
-  settings: Settings = {pythonPath:'',associatePython:true,renderMarkdown:true,autoConnect:true,aiBaseUrl:'',aiApiKey:'',aiModel:'',openDockViews:['marimo-native-outline']};
+  settings: Settings = {pythonPath:'',associatePython:true,renderMarkdown:true,autoConnect:true,aiBaseUrl:'',aiApiKey:'',aiModel:'',aiInline:true,openDockViews:['marimo-native-outline']};
   private associationStatus='';
   recovery!:RecoveryStore;
   private writers = new WriterLocks();
@@ -23,7 +23,7 @@ export default class MarimoPlugin extends Plugin {
   async onload(): Promise<void> {
     const fallback=this.defaultPython();
     const savedSettings=await this.loadData();
-    this.settings={pythonPath:normalizePython(savedSettings?.pythonPath,existsSync(fallback)?fallback:'python3'),associatePython:savedSettings?.associatePython!==false,renderMarkdown:savedSettings?.renderMarkdown!==false,autoConnect:savedSettings?.autoConnect!==false,aiBaseUrl:String(savedSettings?.aiBaseUrl??''),aiApiKey:String(savedSettings?.aiApiKey??''),aiModel:String(savedSettings?.aiModel??''),openDockViews:Array.isArray(savedSettings?.openDockViews)?savedSettings.openDockViews.map(String):['marimo-native-outline']};
+    this.settings={pythonPath:normalizePython(savedSettings?.pythonPath,existsSync(fallback)?fallback:'python3'),associatePython:savedSettings?.associatePython!==false,renderMarkdown:savedSettings?.renderMarkdown!==false,autoConnect:savedSettings?.autoConnect!==false,aiBaseUrl:String(savedSettings?.aiBaseUrl??''),aiApiKey:String(savedSettings?.aiApiKey??''),aiModel:String(savedSettings?.aiModel??''),aiInline:savedSettings?.aiInline!==false,openDockViews:Array.isArray(savedSettings?.openDockViews)?savedSettings.openDockViews.map(String):['marimo-native-outline']};
     this.recovery=new RecoveryStore(join(homedir(),'.local','state','obsidian-marimo','drafts',createHash('sha256').update(this.absoluteRoot()).digest('hex')));
     this.registerView(VIEW_TYPE,leaf=>new MarimoView(leaf,this));
     // marimo's outline lives in Obsidian's right dock, next to the core
@@ -107,6 +107,7 @@ export default class MarimoPlugin extends Plugin {
         {name:plugin.t('AI 端点（OpenAI 兼容）','AI endpoint (OpenAI-compatible)'),desc:plugin.t('创建条的「AI 生成」用。例如 https://api.openai.com/v1；留空则隐藏该入口。','Used by "Generate with AI" in the creation bar, e.g. https://api.openai.com/v1. Leave empty to hide the entry.'),control:{type:'text',key:'aiBaseUrl',defaultValue:''}},
         {name:plugin.t('AI 密钥','AI key'),desc:plugin.t('以 Bearer 头发送到上面的端点；仅存于本地配置。','Sent as a Bearer header to the endpoint above; stored in local config only.'),control:{type:'text',key:'aiApiKey',defaultValue:''}},
         {name:plugin.t('AI 模型','AI model'),desc:plugin.t('例如 gpt-4o-mini。','e.g. gpt-4o-mini.'),control:{type:'text',key:'aiModel',defaultValue:''}},
+        {name:plugin.t('AI 行内补全','AI inline completion'),desc:plugin.t('在单元格中打字停顿后显示灰色建议（幽灵文本），Tab 接受，Esc 取消。需配置上方端点与密钥。','After a short pause, a gray ghost suggestion appears in the cell; Tab accepts, Escape dismisses. Requires the endpoint and key above.'),control:{type:'toggle',key:'aiInline',defaultValue:true}},
       ];}
     }(this.app,this));
   }
@@ -115,7 +116,7 @@ export default class MarimoPlugin extends Plugin {
     return defaultPythonPath({platform:process.platform,home:homedir(),exists:existsSync});
   }
   getPythonPath():string {return normalizePython(this.settings.pythonPath,this.defaultPython());}
-  async onExternalSettingsChange(): Promise<void> {const saved=await this.loadData();this.settings={pythonPath:normalizePython(saved?.pythonPath,this.settings.pythonPath),associatePython:saved?.associatePython!==false,renderMarkdown:saved?.renderMarkdown!==false,autoConnect:saved?.autoConnect!==false,aiBaseUrl:String(saved?.aiBaseUrl??this.settings.aiBaseUrl),aiApiKey:String(saved?.aiApiKey??this.settings.aiApiKey),aiModel:String(saved?.aiModel??this.settings.aiModel),openDockViews:Array.isArray(saved?.openDockViews)?saved.openDockViews.map(String):this.settings.openDockViews};}
+  async onExternalSettingsChange(): Promise<void> {const saved=await this.loadData();this.settings={pythonPath:normalizePython(saved?.pythonPath,this.settings.pythonPath),associatePython:saved?.associatePython!==false,renderMarkdown:saved?.renderMarkdown!==false,autoConnect:saved?.autoConnect!==false,aiBaseUrl:String(saved?.aiBaseUrl??this.settings.aiBaseUrl),aiApiKey:String(saved?.aiApiKey??this.settings.aiApiKey),aiModel:String(saved?.aiModel??this.settings.aiModel),aiInline:saved?.aiInline!==false,openDockViews:Array.isArray(saved?.openDockViews)?saved.openDockViews.map(String):this.settings.openDockViews};}
   /** Re-open remembered sidebar panels and collapse any racing duplicates. */
   private restoreDockViews(): void {
     const hasLeaf=(type:string):boolean=>{

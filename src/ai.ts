@@ -95,6 +95,8 @@ async function completion(
   messages: {role: string;content: string}[],
   options: AIOptions,
   codeReply: boolean,
+  maxTokens?: number,
+  trimReply = true,
 ): Promise<string> {
   const base = config.baseUrl.replace(/\/+$/, '');
   if (!base) throw new Error('AI 端点未配置');
@@ -117,6 +119,7 @@ async function completion(
         messages,
         temperature: 0.2,
         ...(stream ? {stream: true} : {}),
+        ...(maxTokens ? {max_tokens: maxTokens} : {}),
       }),
     });
     if (!response.ok) throw new Error(`AI 请求失败：${response.status} ${response.statusText}`);
@@ -127,7 +130,7 @@ async function completion(
       text = payload.choices?.[0]?.message?.content ?? '';
     }
     if (!text.trim()) throw new Error('AI 返回为空');
-    return codeReply ? stripFences(text) : text.trim();
+    return codeReply ? stripFences(text) : (trimReply ? text.trim() : text);
   } finally {
     clearTimeout(timer);
   }
@@ -211,4 +214,48 @@ export async function chatWithAI(
     ...history,
     {role: 'user', content: message},
   ], normalizeOptions(options), false);
+}
+
+// ------------------------------------------------------------- inline completion
+
+const INLINE_SYSTEM_PROMPT = [
+  'You are a code completion engine inside a marimo notebook cell.',
+  'Insert the text that should appear at the cursor.',
+  'Return ONLY the insertion: no prose, no explanation, no surrounding code fences.',
+].join(' ');
+
+/** Ghost-text suggestions must stay small: they render inline. */
+export const INLINE_MAX_TOKENS = 128;
+const INLINE_MAX_CHARS = 400;
+
+/** The messages for one ghost-text completion at the cursor. */
+export function inlineCompletionMessages(prefix: string, suffix: string): {role: string;content: string}[] {
+  return [
+    {role: 'system', content: INLINE_SYSTEM_PROMPT},
+    {role: 'user', content: 'Code before the cursor:\n' + prefix},
+    {role: 'user', content: 'Code after the cursor:\n' + (suffix || '(end of file)')},
+  ];
+}
+
+/** Tidy a raw reply into safe ghost text: strip fences, cap the length. */
+export function cleanInlineSuggestion(text: string): string {
+  let out = text;
+  // A model that answers with a fenced block gets the block's body.
+  const fenced = /^```[a-zA-Z0-9]*\n([\s\S]*?)```?\s*$/.exec(out);
+  if (fenced) out = fenced[1];
+  out = out.replace(/\s+$/, '');
+  return out.length > INLINE_MAX_CHARS ? out.slice(0, INLINE_MAX_CHARS) : out;
+}
+
+/** One ghost-text suggestion; errors and refusals surface to the caller. */
+export async function fetchInlineCompletion(
+  config: AIConfig,
+  prefix: string,
+  suffix: string,
+  options?: AIOptions | typeof fetch,
+): Promise<string> {
+  // Leading whitespace is meaningful at a caret ("x = 1" + " * 3"), so the
+  // reply keeps its edges and only trailing blanks are dropped.
+  const text = await completion(config, inlineCompletionMessages(prefix, suffix), normalizeOptions(options), false, INLINE_MAX_TOKENS, false);
+  return cleanInlineSuggestion(text);
 }

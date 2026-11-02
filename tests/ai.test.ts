@@ -113,3 +113,37 @@ test('non-data and malformed SSE lines are skipped, not fatal', () => {
   assert.equal(extractDelta('data: {"choices":[{"delta":{}}]}'), null);
   assert.equal(extractDelta('data: {"choices":[{"delta":{"content":"hi"}}]}'), 'hi');
 });
+
+// ---------------- inline completion ----------------
+
+import {cleanInlineSuggestion, fetchInlineCompletion, inlineCompletionMessages} from '../src/ai.ts';
+
+test('inline completion messages carry prefix, suffix and a compact system prompt', () => {
+  const messages = inlineCompletionMessages('x = 1\ny = ', '+ 1');
+  assert.equal(messages[0].role, 'system');
+  assert.match(messages[0].content, /insert/i);
+  assert.match(messages.find(m => m.content.includes('x = 1\ny = '))!.content, /before/i);
+  assert.match(messages.find(m => m.content.includes('+ 1'))!.content, /after/i);
+});
+
+test('fetchInlineCompletion asks the endpoint with a small token cap and cleans the reply', async () => {
+  const {impl, calls} = stubFetch({choices: [{message: {content: '```python\nx + 1\n```'}}]});
+  const text = await fetchInlineCompletion(CONFIG, 'x = 1\ny = ', '', impl);
+  assert.equal(text, 'x + 1');
+  const body = JSON.parse(String(calls[0].init.body));
+  assert.equal(body.model, 'gpt-test');
+  assert.equal(body.max_tokens, 128);
+  assert.equal(body.stream, undefined);
+  assert.match(body.messages.at(-1)!.content, /end of file/i);
+});
+
+test('inline completion refuses without credentials and caps runaway replies', async () => {
+  await assert.rejects(() => fetchInlineCompletion({...CONFIG, apiKey: ''}, 'a', '', fetch));
+  assert.equal(cleanInlineSuggestion('y'.repeat(500)).length, 400);
+  assert.equal(cleanInlineSuggestion('x + 1\n\n'), 'x + 1');
+});
+
+test('inline completion keeps a meaningful leading space', async () => {
+  const {impl} = stubFetch({choices: [{message: {content: ' * 3'}}]});
+  assert.equal(await fetchInlineCompletion(CONFIG, 'y = x', '', impl), ' * 3');
+});

@@ -13,6 +13,7 @@ import {isErrorOutput, isStdinOutput, safeOutput, type BackendMessage, type Cell
 import {isAllowedImageSource, adaptMarimoTex, isBlockedAttribute, isBlockedElement} from './output-policy';
 import {encodeMarkdownCell, outlineEntries, parseMarkdownCell} from './markdown-cell';
 import {generateCellCode} from './ai';
+import {renderPlotly, renderVega} from './chart-embed';
 import {cellTemplate, type CellKind} from './cell-templates';
 import {canAdoptClaim, cellActions, connectionState, environmentLabel, normalizeCellStatus, shouldApplyResult, shouldApplyStopResult, showPrototypeInfo, statusView, toolbarAvailability, type CellStatus, type ConnectionState, type RunPhase} from './status';
 import {fileFromViewState} from './file-state';
@@ -1738,6 +1739,16 @@ export class MarimoView extends EditableFileView {
       return;
     }
     if(output.kind==='text') {if(output.text)target.createEl('pre',{cls:'marimo-native-text'+errorClass,text:output.text}); return;}
+    if(output.kind==='plotly'||output.kind==='vega') {
+      // The spec was JSON-validated by safeOutput; the chart libraries render
+      // it through their APIs from the CDN, with an offline note on failure.
+      try {
+        const spec=JSON.parse(output.text) as unknown;
+        if(output.kind==='plotly')void renderPlotly(target,spec);
+        else void renderVega(target,spec);
+      } catch { /* unreachable: safeOutput pre-parsed the same string */ }
+      return;
+    }
     if(output.kind==='html') {
       // Custom elements never survive the host sanitizer, so widgets are lifted
       // out of the raw string and the rest is sanitized as usual. marimo's

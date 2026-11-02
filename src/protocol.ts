@@ -52,7 +52,7 @@ export function decodeMessage(line: string): BackendMessage {
 }
 
 export interface RenderedOutput {
-  kind: 'text' | 'html' | 'image' | 'unsupported';
+  kind: 'text' | 'html' | 'image' | 'plotly' | 'vega' | 'unsupported';
   text: string;
   /** Set for `image` outputs so the view can build a data URL. */
   mime?: string;
@@ -72,6 +72,16 @@ export function safeOutput(value: unknown): RenderedOutput {
     // Anything that is not plain base64 could smuggle markup into a data URL.
     if (!BASE64.test(data)) return {kind: 'unsupported', text: output.mimetype};
     return {kind: 'image', text: data, mime: output.mimetype};
+  }
+  const mime=typeof output.mimetype==='string'?output.mimetype:'';
+  if (typeof output.data === 'string' && (mime === 'application/vnd.plotly.v1+json' || /^application\/vnd\.vega(lite)?\.v\d\+json$/.test(mime))) {
+    // The JSON spec is handed to the chart library's API, never to markup.
+    try {
+      JSON.parse(output.data);
+    } catch {
+      return {kind: 'unsupported', text: mime};
+    }
+    return {kind: mime === 'application/vnd.plotly.v1+json' ? 'plotly' : 'vega', text: output.data};
   }
   if (typeof output.data !== 'string') return {kind: 'unsupported', text: ''};
   if (output.mimetype === 'application/vnd.marimo+traceback') return {kind:'html',text:output.data};

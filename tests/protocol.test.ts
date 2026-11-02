@@ -89,3 +89,18 @@ test('formatter and completion results are validated before use',()=>{
   assert.throws(()=>decodeMessage('{"type":"result","id":"10","options":[{"type":1}]}'));
   assert.throws(()=>decodeMessage('{"type":"result","id":"10","prefixLength":-1}'));
 });
+
+test('plotly and vega chart outputs are recognized for CDN rendering',()=>{
+  const spec={data:{values:[{a:1}]}};
+  const plotly=safeOutput({mimetype:'application/vnd.plotly.v1+json',data:JSON.stringify(spec)});
+  assert.equal(plotly.kind,'plotly');
+  assert.deepEqual(JSON.parse(plotly.text),spec);
+  const vega=safeOutput({mimetype:'application/vnd.vegalite.v6+json',data:JSON.stringify(spec)});
+  assert.equal(vega.kind,'vega');
+  assert.deepEqual(JSON.parse(vega.text),spec);
+  const vega5=safeOutput({mimetype:'application/vnd.vega.v5+json',data:'{}'});
+  assert.equal(vega5.kind,'vega');
+  // Broken JSON must not reach the renderer.
+  assert.equal(safeOutput({mimetype:'application/vnd.plotly.v1+json',data:'not json'}).kind,'unsupported');
+  assert.equal(safeOutput({mimetype:'application/vnd.plotly.v1+json',data:'{"layout":{}}'.slice(0,5)}).kind,'unsupported');
+});

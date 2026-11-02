@@ -887,3 +887,15 @@
   .marimo-native-cell::before { left: -4px; }
   .marimo-native-run { width: 24px; height: 24px; }
 }
+
+/* -------------------------------------------------------- chart embeds */
+
+.marimo-native-chart {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.marimo-native-chart svg,
+.marimo-native-chart canvas {
+  max-width: 100%;
+  height: auto;
+}

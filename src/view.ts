@@ -151,8 +151,14 @@ export class MarimoView extends EditableFileView {
   }
   private updateControls(): void {
     const available = toolbarAvailability({connection:this.connection(), run:this.runPhase, ready:this.notebookReady, hasDraft:this.hasDraft, stopping:this.stopping, busy:this.busy, hasStale:this.hasStaleCells()});
-    this.connectButton.hidden = !this.notebookReady || this.connection() !== 'disconnected';
+    this.connectButton.hidden = !this.notebookReady || (this.connection() !== 'disconnected' && !this.connecting);
     this.connectButton.disabled = !available.connect;
+    // Native marimo keeps a spinner in the top bar while connecting and
+    // swaps Run-all for one during a notebook run; mirror both.
+    this.connectButton.toggleClass('is-busy',this.connecting);
+    setIcon(this.connectButton,this.connecting?'loader-2':'plug-zap');
+    this.runButton.toggleClass('is-busy',this.runPhase==='running');
+    setIcon(this.runButton,this.runPhase==='running'?'loader-2':'play');
     this.runButton.disabled = !available.runAll;
     this.saveButton.disabled = !available.save;
     this.stopButton.disabled = !available.stop;

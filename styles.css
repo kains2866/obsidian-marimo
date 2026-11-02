@@ -1260,3 +1260,11 @@ body.marimo-cell-dragging {
   margin: 2px 0;
   pointer-events: none;
 }
+
+/* --------------------------------------------- spinners (native marimo) */
+
+@keyframes marimo-spin { to { transform: rotate(360deg); } }
+button.is-busy svg,
+.marimo-native-cell[data-cell-status="running"] button[data-action="run-cell"] svg {
+  animation: marimo-spin .9s linear infinite;
+}

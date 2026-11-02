@@ -31,20 +31,20 @@
 
 ### 1. 自行准备 Python 环境
 
-建议使用独立虚拟环境。插件不会自动安装或升级 Python 依赖。
+建议使用独立虚拟环境。格式化操作需要 Ruff 0.17.3；其他 Notebook 执行不依赖 Ruff。插件不会自动安装或升级 Python 依赖。
 
 macOS／Linux：
 
 ```sh
 python3.12 -m venv ~/.venvs/obsidian-marimo
-~/.venvs/obsidian-marimo/bin/python -m pip install marimo==0.25.2
+~/.venvs/obsidian-marimo/bin/python -m pip install marimo==0.25.2 ruff==0.17.3
 ```
 
 Windows PowerShell：
 
 ```powershell
 py -3.12 -m venv "$env:USERPROFILE\.venvs\obsidian-marimo"
-& "$env:USERPROFILE\.venvs\obsidian-marimo\Scripts\python.exe" -m pip install marimo==0.25.2
+& "$env:USERPROFILE\.venvs\obsidian-marimo\Scripts\python.exe" -m pip install marimo==0.25.2 ruff==0.17.3
 ```
 
 Notebook 使用的 pandas、Altair 等包也需装入同一环境。由于插件依赖特定版本的协议适配层，目前会拒绝其他 marimo 版本。

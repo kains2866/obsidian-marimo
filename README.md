@@ -31,20 +31,20 @@ Requirements: **Obsidian desktop 1.13.0+**, **Python 3.12**, and exactly **marim
 
 ### 1. Prepare Python yourself
 
-Use a dedicated virtual environment. The plugin does not install or upgrade Python packages automatically.
+Use a dedicated virtual environment. Ruff 0.17.3 supplies the Format action; other notebook execution does not require Ruff. The plugin does not install or upgrade Python packages automatically.
 
 macOS / Linux:
 
 ```sh
 python3.12 -m venv ~/.venvs/obsidian-marimo
-~/.venvs/obsidian-marimo/bin/python -m pip install marimo==0.25.2
+~/.venvs/obsidian-marimo/bin/python -m pip install marimo==0.25.2 ruff==0.17.3
 ```
 
 Windows PowerShell:
 
 ```powershell
 py -3.12 -m venv "$env:USERPROFILE\.venvs\obsidian-marimo"
-& "$env:USERPROFILE\.venvs\obsidian-marimo\Scripts\python.exe" -m pip install marimo==0.25.2
+& "$env:USERPROFILE\.venvs\obsidian-marimo\Scripts\python.exe" -m pip install marimo==0.25.2 ruff==0.17.3
 ```
 
 Packages used by your notebook, such as pandas or Altair, must be installed in the same environment. Other marimo versions are rejected because the plugin uses a version-specific protocol adapter.

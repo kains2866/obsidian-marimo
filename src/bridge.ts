@@ -4,7 +4,7 @@ import {stopOwnedProcess} from './process-lifecycle';
 import {decodeMessage, type BackendMessage, type Cell, type RequestResult} from './protocol';
 import backendSource from '../python/backend.py';
 
-export type RequestMethod = 'run' | 'save' | 'create' | 'delete' | 'interrupt' | 'stdin' | 'ui' | 'config' | 'format' | 'complete';
+export type RequestMethod = 'run' | 'save' | 'create' | 'delete' | 'interrupt' | 'stdin' | 'ui' | 'config' | 'format' | 'complete' | 'open';
 
 export interface RequestPayload {
   cells?: Cell[];
@@ -66,7 +66,7 @@ export class Backend {
           if (frame.type === 'error') fail(new Error(frame.error));
           if (frame.type === 'result') {
             const pending = this.pending.get(frame.id);
-            if (pending) {clearTimeout(pending.timer); this.pending.delete(frame.id); frame.error ? pending.reject(new Error(frame.error)) : pending.resolve({cellId: frame.cellId, codes: frame.codes, options: frame.options, prefixLength: frame.prefixLength});}
+            if (pending) {clearTimeout(pending.timer); this.pending.delete(frame.id); frame.error ? pending.reject(new Error(frame.error)) : pending.resolve({cellId: frame.cellId, codes: frame.codes, options: frame.options, prefixLength: frame.prefixLength, opened: frame.opened});}
           }
           this.onMessage(frame);
         } catch (error) {
@@ -96,6 +96,14 @@ export class Backend {
       this.pending.set(id, {resolve, reject, timer});
       this.process!.stdin.write(JSON.stringify(frame)+'\n', error => {if(error) {clearTimeout(timer); this.pending.delete(id); reject(error);}});
     });
+  }
+  /**
+   * Open this notebook in the native marimo editor, in the user's browser.
+   * The adapter holds the access token; only success/failure comes back.
+   */
+  async openInBrowser(): Promise<boolean> {
+    const result = await this.request('open');
+    return result.opened === true;
   }
   close(): Promise<void> {
     if(this.closing)return this.closing;

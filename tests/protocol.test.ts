@@ -90,6 +90,16 @@ test('formatter and completion results are validated before use',()=>{
   assert.throws(()=>decodeMessage('{"type":"result","id":"10","prefixLength":-1}'));
 });
 
+test('an open result only reports whether a browser was launched',()=>{
+  const opened=decodeMessage('{"type":"result","id":"11","opened":true}');
+  assert.equal(opened.type,'result');
+  if(opened.type==='result')assert.equal(opened.opened,true);
+  const refused=decodeMessage('{"type":"result","id":"11","opened":false}');
+  if(refused.type==='result')assert.equal(refused.opened,false);
+  // A truthy string would make "did it open?" unanswerable.
+  assert.throws(()=>decodeMessage('{"type":"result","id":"11","opened":"yes"}'));
+});
+
 test('plotly and vega chart outputs are recognized for CDN rendering',()=>{
   const spec={data:{values:[{a:1}]}};
   const plotly=safeOutput({mimetype:'application/vnd.plotly.v1+json',data:JSON.stringify(spec)});

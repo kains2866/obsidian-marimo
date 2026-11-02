@@ -55,6 +55,8 @@ export class MarimoView extends EditableFileView {
   private stopButton!: HTMLButtonElement;
   private interruptButton!: HTMLButtonElement;
   private formatButton!: HTMLButtonElement;
+  private aiButton!: HTMLButtonElement;
+  private browserButton!: HTMLButtonElement;
   private staleButton!: HTMLButtonElement;
   private restoreButton!: HTMLButtonElement;
   private notice!: HTMLElement;
@@ -285,6 +287,14 @@ export class MarimoView extends EditableFileView {
     this.formatButton.setAttr('title', this.plugin.t('用 ruff 格式化全部单元格','Format all cells with ruff'));
     this.interruptButton = this.createAction('interrupt', this.plugin.t('中断运行','Interrupt run'), 'circle-stop', true, () => void this.interrupt());
     this.interruptButton.hidden = true;
+    this.aiButton = this.createAction('generate-with-ai', this.plugin.t('AI 生成单元格','Generate with AI'), 'bot', false, () => this.startAI());
+    this.aiButton.setAttr('aria-label', this.plugin.t('用 AI 生成一个单元格','Generate a cell with AI'));
+    this.aiButton.setAttr('title', this.plugin.t('用 AI 生成一个单元格','Generate a cell with AI'));
+    // The escape hatch to the parts of marimo this frontend does not rebuild:
+    // chat panel, package management, provider settings, copilot.
+    this.browserButton = this.createAction('open-browser', this.plugin.t('在浏览器打开','Open in browser'), 'external-link', false, () => void this.openInBrowser());
+    this.browserButton.setAttr('aria-label', this.plugin.t('在浏览器中打开原生 marimo 编辑器','Open the native marimo editor in a browser'));
+    this.browserButton.setAttr('title', this.plugin.t('在浏览器中打开原生 marimo 编辑器','Open the native marimo editor in a browser'));
     this.stopButton = this.createAction('stop', this.plugin.t('停止并断开','Stop and disconnect'), 'square', false, () => void this.stop());
     this.restoreButton = this.createAction('restore', this.plugin.t('恢复草稿','Restore draft'), 'history', false, () => this.restoreDraft());
     this.controls = [this.runButton, this.saveButton];
@@ -1329,6 +1339,43 @@ export class MarimoView extends EditableFileView {
     document.addEventListener('pointerdown',this.menuDismiss,{capture:true});
     document.addEventListener('keydown',this.menuKey,{capture:true});
     document.addEventListener('scroll',this.menuDismiss,{capture:true});
+  }
+
+  /**
+   * The toolbar's AI entry, kept visible whether or not a provider is set:
+   * an entry that silently disappears is indistinguishable from a missing
+   * feature. Without a key it points at the settings instead.
+   */
+  startAI(): void {
+    if(!this.plugin.settings.aiBaseUrl||!this.plugin.settings.aiApiKey) {
+      new Notice(this.plugin.t(
+        '尚未配置 AI 端点与密钥：设置 → Marimo Notebook → AI。',
+        'No AI endpoint or key yet: Settings → Marimo Notebook → AI.'));
+      return;
+    }
+    this.promptAI(this.selectedId);
+  }
+
+  /**
+   * Escape hatch: open the same notebook in the native marimo editor. Everything
+   * this frontend does not reimplement (chat panel, package installs, AI provider
+   * settings, copilot) stays reachable there.
+   */
+  async openInBrowser(): Promise<void> {
+    if(!this.backend) {
+      new Notice(this.plugin.t('请先连接，再在浏览器打开原生编辑器。','Connect first, then open the native editor in a browser.'));
+      return;
+    }
+    try {
+      // The browser reads the file, not this view's in-memory editor state.
+      if(this.notebookReady) await this.perform('save',this.readCells());
+      const opened=await this.backend.openInBrowser();
+      new Notice(opened
+        ? this.plugin.t('已在浏览器打开原生编辑器。两边写同一个文件，请勿同时编辑，后保存的一方会覆盖对方。','Opened the native editor. Both sides write the same file; do not edit in both at once — the later save wins.')
+        : this.plugin.t('没能启动浏览器，请检查系统默认浏览器设置。','Could not launch a browser; check your default browser.'));
+    } catch(error) {
+      new Notice(String(error));
+    }
   }
 
   /** The creation bar's GENERATE WITH AI: describe a cell, get a cell. */

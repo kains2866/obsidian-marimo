@@ -7,7 +7,7 @@ export interface Cell {
 export type BackendMessage =
   | {type: 'ready'; cells: Cell[]}
   | {type: 'event'; data: Record<string, unknown>}
-  | {type: 'result'; id: string; error?: string; cellId?: string; codes?: Record<string, string>; options?: CompletionOption[]; prefixLength?: number}
+  | {type: 'result'; id: string; error?: string; cellId?: string; codes?: Record<string, string>; options?: CompletionOption[]; prefixLength?: number; opened?: boolean}
   | {type: 'error'; error: string};
 
 /** One language-server suggestion; `info` is already flattened to text. */
@@ -23,6 +23,8 @@ export interface RequestResult {
   options?: CompletionOption[];
   /** Characters before the cursor the accepted option replaces. */
   prefixLength?: number;
+  /** `open` answers whether a browser was actually launched. */
+  opened?: boolean;
 }
 
 export function decodeMessage(line: string): BackendMessage {
@@ -45,6 +47,8 @@ export function decodeMessage(line: string): BackendMessage {
       if (!Array.isArray(frame.options) || !frame.options.every(option => option && typeof option.name === 'string')) throw new Error('Invalid backend message');
     }
     if (frame.prefixLength !== undefined && (typeof frame.prefixLength !== 'number' || frame.prefixLength < 0)) throw new Error('Invalid backend message');
+    // Anything but a boolean would make "did the browser open?" ambiguous.
+    if (frame.opened !== undefined && typeof frame.opened !== 'boolean') throw new Error('Invalid backend message');
     return frame as unknown as BackendMessage;
   }
   if (frame.type === 'error' && typeof frame.error === 'string') return frame as unknown as BackendMessage;

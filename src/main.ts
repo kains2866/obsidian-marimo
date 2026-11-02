@@ -45,8 +45,19 @@ export default class MarimoPlugin extends Plugin {
       const done=existing?Promise.resolve():leaf.setViewState({type:VIEW_TYPE_VARIABLES,active:true});
       void done.then(()=>this.app.workspace.revealLeaf(leaf));
     }});
-    if(this.settings.associatePython) {
-      try{this.registerExtensions(['py'],VIEW_TYPE);this.associationStatus=this.t('点击 Python 文件会在此插件中打开，普通脚本只读显示。','Clicking Python files opens this view; ordinary scripts are shown read-only.');}
+    // Escape hatch for the native features this frontend does not rebuild;
+    // the adapter keeps the access token, so nothing secret reaches the UI.
+    this.addCommand({id:'open-marimo-in-browser',name:this.t('在浏览器打开原生 marimo 编辑器','Open native marimo editor in browser'),callback:()=>{
+      const view=this.app.workspace.getActiveViewOfType(MarimoView);
+      if(!view) {new Notice(this.t('请先打开一个 marimo notebook。','Open a marimo notebook first.'));return;}
+      void view.openInBrowser();
+    }});
+    this.addCommand({id:'marimo-generate-with-ai',name:this.t('用 AI 生成单元格','Generate a cell with AI'),callback:()=>{
+      const view=this.app.workspace.getActiveViewOfType(MarimoView);
+      if(!view) {new Notice(this.t('请先打开一个 marimo notebook。','Open a marimo notebook first.'));return;}
+      view.startAI();
+    }});
+    if(this.settings.associatePython) {      try{this.registerExtensions(['py'],VIEW_TYPE);this.associationStatus=this.t('点击 Python 文件会在此插件中打开，普通脚本只读显示。','Clicking Python files opens this view; ordinary scripts are shown read-only.');}
       catch{this.associationStatus=this.t('Python 文件已由其他插件接管，保留原关联；可使用右键菜单或命令打开。','Another plugin handles Python files. Its association is preserved; use the context menu or command.');}
     }else this.associationStatus=this.t('未关联 Python 文件；可使用右键菜单或命令打开。','Python file association is disabled; use the context menu or command.');
     const open = (file:TFile) => void this.openFile(file).catch(error=>new Notice(String(error)));

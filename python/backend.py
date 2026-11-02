@@ -15,6 +15,7 @@ import stat
 import sys
 import urllib.parse
 import urllib.request
+import webbrowser
 from pathlib import Path
 
 from websockets.asyncio.client import connect
@@ -250,6 +251,19 @@ class NativeSession:
         if not isinstance(text, str):
             raise ValueError("stdin requires text")
         await asyncio.to_thread(self._request, "/api/kernel/stdin", {"text": text})
+
+    def open_in_browser(self):
+        """Open the native marimo editor for this same notebook.
+
+        The URL embeds the session access token, so the token is handed to the
+        browser directly and never travels back over stdout. Used as the escape
+        hatch for features this frontend does not reimplement (chat panel,
+        package management, settings, AI copilot).
+        """
+        if not self.base_url:
+            raise RuntimeError("marimo is not running")
+        url = self.base_url + "/?access_token=" + urllib.parse.quote(self.token)
+        return bool(webbrowser.open(url, new=2))
 
     async def set_ui_element(self, object_id, value):
         """Push a `mo.ui` element's new value and consume the cycle it triggers.
@@ -561,6 +575,11 @@ async def serve(filename):
                 elif method == "interrupt":
                     await session.interrupt()
                     emit({"type": "result", "id": request_id})
+                elif method == "open":
+                    # Only a boolean leaves the adapter: the token in the URL
+                    # stays inside the Python process and the browser.
+                    opened = await asyncio.to_thread(session.open_in_browser)
+                    emit({"type": "result", "id": request_id, "opened": opened})
                 elif method == "stdin":
                     await session.stdin(request.get("value"))
                     emit({"type": "result", "id": request_id})

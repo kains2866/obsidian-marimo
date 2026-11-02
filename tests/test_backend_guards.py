@@ -165,3 +165,16 @@ class GuardTests(unittest.IsolatedAsyncioTestCase):
             await self.session.delete('b')
             await self.session.save([{'id': 'a', 'code': 'x=2'}])
         self.assertEqual(self.file.read_text(), 'rendered\n')
+
+    def test_open_in_browser_requires_a_running_service(self):
+        with self.assertRaisesRegex(RuntimeError, 'not running'):
+            self.session.open_in_browser()
+
+    def test_open_in_browser_hands_the_token_to_the_browser_only(self):
+        self.session.base_url = 'http://127.0.0.1:1234'
+        self.session.token = 'secret-token'
+        with patch.object(BACKEND.webbrowser, 'open', return_value=True) as open_browser:
+            self.assertTrue(self.session.open_in_browser())
+        url = open_browser.call_args.args[0]
+        self.assertTrue(url.startswith('http://127.0.0.1:1234/?access_token='))
+        self.assertIn('secret-token', url)

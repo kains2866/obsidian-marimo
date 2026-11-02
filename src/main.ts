@@ -12,10 +12,11 @@ import {NOTEBOOK_TEMPLATE, nextNotebookPath} from './notebook-file';
 import type {Cell} from './protocol';
 import {WriterLocks,type WriterLease} from './writer-lock';
 import {defaultPythonPath} from './python-path';
+import {autoConnectEnabled} from './execution-preferences';
 
 interface Settings {pythonPath: string;associatePython:boolean;renderMarkdown:boolean;autoConnect:boolean;aiBaseUrl:string;aiApiKey:string;aiModel:string;aiInline:boolean;openDockViews:string[]}
 export default class MarimoPlugin extends Plugin {
-  settings: Settings = {pythonPath:'',associatePython:true,renderMarkdown:true,autoConnect:true,aiBaseUrl:'',aiApiKey:'',aiModel:'',aiInline:true,openDockViews:['marimo-native-outline']};
+  settings: Settings = {pythonPath:'',associatePython:true,renderMarkdown:true,autoConnect:false,aiBaseUrl:'',aiApiKey:'',aiModel:'',aiInline:true,openDockViews:['marimo-native-outline']};
   private associationStatus='';
   recovery!:RecoveryStore;
   private writers = new WriterLocks();
@@ -23,7 +24,7 @@ export default class MarimoPlugin extends Plugin {
   async onload(): Promise<void> {
     const fallback=this.defaultPython();
     const savedSettings=await this.loadData();
-    this.settings={pythonPath:normalizePython(savedSettings?.pythonPath,existsSync(fallback)?fallback:'python3'),associatePython:savedSettings?.associatePython!==false,renderMarkdown:savedSettings?.renderMarkdown!==false,autoConnect:savedSettings?.autoConnect!==false,aiBaseUrl:String(savedSettings?.aiBaseUrl??''),aiApiKey:String(savedSettings?.aiApiKey??''),aiModel:String(savedSettings?.aiModel??''),aiInline:savedSettings?.aiInline!==false,openDockViews:Array.isArray(savedSettings?.openDockViews)?savedSettings.openDockViews.map(String):['marimo-native-outline']};
+    this.settings={pythonPath:normalizePython(savedSettings?.pythonPath,existsSync(fallback)?fallback:'python3'),associatePython:savedSettings?.associatePython!==false,renderMarkdown:savedSettings?.renderMarkdown!==false,autoConnect:autoConnectEnabled(savedSettings?.autoConnect),aiBaseUrl:String(savedSettings?.aiBaseUrl??''),aiApiKey:String(savedSettings?.aiApiKey??''),aiModel:String(savedSettings?.aiModel??''),aiInline:savedSettings?.aiInline!==false,openDockViews:Array.isArray(savedSettings?.openDockViews)?savedSettings.openDockViews.map(String):['marimo-native-outline']};
     this.recovery=new RecoveryStore(join(homedir(),'.local','state','obsidian-marimo','drafts',createHash('sha256').update(this.absoluteRoot()).digest('hex')));
     this.registerView(VIEW_TYPE,leaf=>new MarimoView(leaf,this));
     // marimo's outline lives in Obsidian's right dock, next to the core
@@ -100,12 +101,12 @@ export default class MarimoPlugin extends Plugin {
     const plugin=this;
     this.addSettingTab(new class extends PluginSettingTab {
       getSettingDefinitions(): SettingDefinitionItem[] {return [
-        {name:plugin.t('打开文件自动连接','Auto-connect on open'),desc:plugin.t('打开 marimo notebook 后立即启动内核并运行（本地 Python，拥有当前用户权限），无需手动点击连接。','Opening a marimo notebook starts its kernel and runs it right away (local Python with your user permissions); no manual connect click.'),control:{type:'toggle',key:'autoConnect',defaultValue:true}},
+        {name:plugin.t('打开文件自动连接','Auto-connect on open'),desc:plugin.t('打开 marimo notebook 后立即启动内核并运行（本地 Python，拥有当前用户权限），无需手动点击连接。','Opening a marimo notebook starts its kernel and runs it right away (local Python with your user permissions); no manual connect click.'),control:{type:'toggle',key:'autoConnect',defaultValue:false}},
         {name:plugin.t('自动渲染 Markdown 单元格','Auto-render markdown cells'),desc:plugin.t('单个 mo.md(...) 调用的单元格直接以 Obsidian 排版显示（公式、内链、嵌入），Python 代码折叠，点击预览即可编辑。更改后重新加载插件生效。','A cell that is a single mo.md(...) call renders with Obsidian markdown (math, links, embeds) with the Python code folded; click the preview to edit. Reload the plugin to apply.'),control:{type:'toggle',key:'renderMarkdown',defaultValue:true}},
-        {name:plugin.t('点击 Python 文件打开','Open Python files on click'),desc:plugin.associationStatus+' '+plugin.t('文件以只读预览打开，连接后才会执行代码。更改后重新加载插件生效。','Files open as a read-only preview; code only runs after you connect. Changes take effect after reloading the plugin.'),control:{type:'toggle',key:'associatePython',defaultValue:true}},
+        {name:plugin.t('点击 Python 文件打开','Open Python files on click'),desc:plugin.associationStatus+' '+plugin.t('默认只读预览，手动连接后执行；自动连接开启时会直接执行。更改文件关联后重新加载插件生效。','Files open read-only by default. Connecting executes code; enabling auto-connect executes on open. Reload to change file association.'),control:{type:'toggle',key:'associatePython',defaultValue:true}},
         {name:plugin.t('marimo Python 路径','marimo Python path'),desc:plugin.t('须安装 marimo 0.25.2，其他版本会被拒绝。连接时仅在本机回环地址启动带认证的服务，断开或关闭页面即结束该进程。','Requires marimo 0.25.2; other versions are rejected. Connecting starts an authenticated loopback-only service that is stopped when you disconnect or close the view.'),control:{type:'text',key:'pythonPath',defaultValue:fallback}},
-        {name:plugin.t('AI 端点（OpenAI 兼容）','AI endpoint (OpenAI-compatible)'),desc:plugin.t('创建条的「AI 生成」用。例如 https://api.openai.com/v1；留空则隐藏该入口。','Used by "Generate with AI" in the creation bar, e.g. https://api.openai.com/v1. Leave empty to hide the entry.'),control:{type:'text',key:'aiBaseUrl',defaultValue:''}},
-        {name:plugin.t('AI 密钥','AI key'),desc:plugin.t('以 Bearer 头发送到上面的端点；仅存于本地配置。','Sent as a Bearer header to the endpoint above; stored in local config only.'),control:{type:'text',key:'aiApiKey',defaultValue:''}},
+        {name:plugin.t('AI 端点（OpenAI 兼容）','AI endpoint (OpenAI-compatible)'),desc:plugin.t('可选。AI 功能会把代码上下文及变量预览发送至此端点，例如 https://api.openai.com/v1；留空不发送 AI 请求。','Optional. AI sends code context and variable previews to this endpoint, e.g. https://api.openai.com/v1. Leave empty to disable AI requests.'),control:{type:'text',key:'aiBaseUrl',defaultValue:''}},
+        {name:plugin.t('AI 密钥','AI key'),desc:plugin.t('以 Bearer 头发送到配置的端点；明文保存在仓库插件 data.json 中，可能随同步工具同步。','Sent as a Bearer header to your endpoint. Stored as plaintext in the plugin data.json; vault sync tools may sync it.'),control:{type:'text',key:'aiApiKey',defaultValue:''}},
         {name:plugin.t('AI 模型','AI model'),desc:plugin.t('例如 gpt-4o-mini。','e.g. gpt-4o-mini.'),control:{type:'text',key:'aiModel',defaultValue:''}},
         {name:plugin.t('AI 行内补全','AI inline completion'),desc:plugin.t('在单元格中打字停顿后显示灰色建议（幽灵文本），Tab 接受，Esc 取消。需配置上方端点与密钥。','After a short pause, a gray ghost suggestion appears in the cell; Tab accepts, Escape dismisses. Requires the endpoint and key above.'),control:{type:'toggle',key:'aiInline',defaultValue:true}},
       ];}
@@ -116,7 +117,7 @@ export default class MarimoPlugin extends Plugin {
     return defaultPythonPath({platform:process.platform,home:homedir(),exists:existsSync});
   }
   getPythonPath():string {return normalizePython(this.settings.pythonPath,this.defaultPython());}
-  async onExternalSettingsChange(): Promise<void> {const saved=await this.loadData();this.settings={pythonPath:normalizePython(saved?.pythonPath,this.settings.pythonPath),associatePython:saved?.associatePython!==false,renderMarkdown:saved?.renderMarkdown!==false,autoConnect:saved?.autoConnect!==false,aiBaseUrl:String(saved?.aiBaseUrl??this.settings.aiBaseUrl),aiApiKey:String(saved?.aiApiKey??this.settings.aiApiKey),aiModel:String(saved?.aiModel??this.settings.aiModel),aiInline:saved?.aiInline!==false,openDockViews:Array.isArray(saved?.openDockViews)?saved.openDockViews.map(String):this.settings.openDockViews};}
+  async onExternalSettingsChange(): Promise<void> {const saved=await this.loadData();this.settings={pythonPath:normalizePython(saved?.pythonPath,this.settings.pythonPath),associatePython:saved?.associatePython!==false,renderMarkdown:saved?.renderMarkdown!==false,autoConnect:autoConnectEnabled(saved?.autoConnect),aiBaseUrl:String(saved?.aiBaseUrl??this.settings.aiBaseUrl),aiApiKey:String(saved?.aiApiKey??this.settings.aiApiKey),aiModel:String(saved?.aiModel??this.settings.aiModel),aiInline:saved?.aiInline!==false,openDockViews:Array.isArray(saved?.openDockViews)?saved.openDockViews.map(String):this.settings.openDockViews};}
   /** Re-open remembered sidebar panels and collapse any racing duplicates. */
   private restoreDockViews(): void {
     const hasLeaf=(type:string):boolean=>{
@@ -162,11 +163,7 @@ export default class MarimoPlugin extends Plugin {
     const leaf=this.app.workspace.getLeaf('tab');
     await leaf.setViewState({type:VIEW_TYPE,state:{file:file.path},active:true});
   }
-  /**
-   * Create a marimo notebook in `folder`, open it in the native view and start
-   * its kernel. The kernel is the point: a brand-new file has nothing to show
-   * until it runs, so the user should not have to press connect as well.
-   */
+  /** Create and preview a standard notebook; execution follows the opt-in setting. */
   async createNotebook(folder?:string): Promise<void> {
     try {
       const target=folder??this.defaultFolder();
@@ -175,7 +172,7 @@ export default class MarimoPlugin extends Plugin {
       await this.openFile(file);
       const leaf=this.app.workspace.getLeavesOfType(VIEW_TYPE).find(candidate=>candidate.view instanceof MarimoView&&candidate.view.getState().filename===file.path);
       const view=leaf?.view;
-      if(view instanceof MarimoView) await view.autoConnect();
+      if(this.settings.autoConnect&&view instanceof MarimoView) await view.autoConnect();
       else new Notice(this.t('已创建 '+path+'，请手动连接。','Created '+path+'; connect it manually.'));
     } catch(error) {new Notice(String(error));}
   }

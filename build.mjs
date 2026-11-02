@@ -1,5 +1,12 @@
 import {build} from 'esbuild';
-import {mkdir,copyFile} from 'node:fs/promises';
+import {mkdir,copyFile,writeFile,appendFile} from 'node:fs/promises';
+import {builtinModules} from 'node:module';
+import {collectThirdPartyNotices} from './scripts/third-party-notices.mjs';
 await mkdir('dist',{recursive:true});
-await build({entryPoints:['src/main.ts'],outfile:'dist/main.js',bundle:true,loader:{'.py':'text'},platform:'node',format:'cjs',target:'es2022',external:['obsidian','electron']});
+const result=await build({entryPoints:['src/main.ts'],outfile:'dist/main.js',bundle:true,loader:{'.py':'text'},platform:'browser',format:'cjs',target:'es2022',external:['obsidian','electron','node:*',...builtinModules],metafile:true,legalComments:'eof'});
 for(const name of ['manifest.json','styles.css']) await copyFile(name,`dist/${name}`);
+await mkdir('build',{recursive:true});
+await writeFile('build/metafile.json',JSON.stringify(result.metafile,null,2)+'\n');
+const notices=collectThirdPartyNotices(process.cwd(),result.metafile);
+await writeFile('build/third-party-notices.md',notices);
+await appendFile('dist/main.js','\n/* Third-party license texts\n'+notices.replaceAll('*/','* /')+'\n*/\n');

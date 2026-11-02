@@ -3,7 +3,8 @@
   "name": "MarimoNotebook",
   "version": "0.0.1",
   "minAppVersion": "1.13.0",
-  "description": "Native marimo frontend \u2014 local experimental prototype.",
+  "description": "Edit and run reactive marimo notebooks with a native interface and a local Python runtime.",
   "author": "Kains",
-  "isDesktopOnly": true
+  "isDesktopOnly": true,
+  "authorUrl": "https://github.com/kains2866"
 }

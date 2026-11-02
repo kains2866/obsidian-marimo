@@ -6,21 +6,41 @@
   "scripts": {
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "check:release": "node scripts/check-release.mjs",
+    "package": "node scripts/package.mjs"
   },
   "devDependencies": {
-    "obsidian": "1.14.4",
-    "typescript": "6.0.3",
+    "@types/node": "26.6.5",
     "esbuild": "0.28.2",
-    "@types/node": "26.6.5"
+    "obsidian": "1.14.4",
+    "typescript": "6.0.3"
   },
   "dependencies": {
-    "@codemirror/view": "6.43.13",
-    "@codemirror/state": "6.7.6",
+    "@codemirror/autocomplete": "6.20.3",
+    "@codemirror/commands": "6.11.1",
     "@codemirror/lang-python": "6.2.1",
     "@codemirror/language": "6.13.1",
-    "@codemirror/commands": "6.11.1",
-    "@codemirror/autocomplete": "6.20.3",
-    "@lezer/highlight": "1.2.5"
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.13",
+    "@lezer/highlight": "1.2.5",
+    "plotly.js-dist-min": "2.32.0",
+    "vega": "6.4.0",
+    "vega-embed": "7.3.0",
+    "vega-lite": "6.5.0"
+  },
+  "description": "A native marimo notebook editor for Obsidian, powered by a local Python runtime.",
+  "license": "MIT",
+  "author": "Kains",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kains2866/obsidian-marimo-notebook.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kains2866/obsidian-marimo-notebook/issues"
+  },
+  "homepage": "https://github.com/kains2866/obsidian-marimo-notebook#readme",
+  "engines": {
+    "node": ">=24"
   }
 }

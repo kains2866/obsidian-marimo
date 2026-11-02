@@ -1,13 +1,23 @@
 ---
 title: 文档索引
 created: 2026-11-01
-updated: 2026-11-01
+updated: 2026-11-02
 status: current
 ---
 
 # 文档索引
 
 本目录区分**当前有效**的设计与**已废弃**的历史路线。只有「当前」栏目下的文档可作为实现依据。
+
+## 公开与发行资料
+
+- [英文首页](../README.md)／[中文首页](../README.zh-CN.md)：当前功能、安装、隐私与边界。
+- [发行准备计划](superpowers/plans/2026-11-02-release-preparation.md)／[发行流程](RELEASING.md)／[提交材料](SUBMISSION.md)。
+- [0.0.1 发行说明](releases/0.0.1.md)／[第三方许可](../THIRD_PARTY_NOTICES.md)。
+
+下方的设计与早期验证记录保留各自日期对应的范围；当前功能以首页和源码为准。
+
+- [本轮发行准备验证](verification/2026-11-02-release-preparation.md)：实际执行的检查与未验证边界。
 
 ## 当前：原生路线（有效）
 
@@ -27,7 +37,7 @@ status: current
 | [设计文档 5 份](history/superpowers/specs/2026-11-01-marimo-integration/README.md) | 产品交互、技术架构、Agent 契约、测试矩阵 |
 | [实施计划](history/superpowers/plans/2026-11-01-marimo-integration.md) | 原网页嵌入路线的分阶段任务 |
 
-**历史文档中「嵌入官方编辑器」「iframe」「Agent 接口」等内容均不再执行。** 当前实现不嵌 iframe/webview，不新增 Agent 连接管理，不做数据库/AI/Properties 集成。
+**历史文档中「嵌入官方编辑器」「iframe」「Agent 接口」等内容均不再执行。** 当前主要界面不嵌 iframe/webview。Agent 连接管理、数据库和 Properties 未纳入本轮；可选 AI 已在后续原生实现中加入，见当前首页。
 
 ## 相关位置
 

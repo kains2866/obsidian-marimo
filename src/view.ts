@@ -258,8 +258,7 @@ export class MarimoView extends EditableFileView {
         // A draft is worth advertising before connecting: the read-only
         // preview already shows the restore offer.
         this.refreshRecovery();
-        // Opening the file is intention enough: start the kernel right away,
-        // like "new notebook" already does, instead of a second click.
+        // Only an existing explicit opt-in allows opening to execute code.
         if(this.plugin.settings.autoConnect)void this.autoConnect();
       }
       else this.showSource(source, this.plugin.t('普通 Python 脚本 · 只读','Python script · read-only'));
@@ -436,14 +435,7 @@ export class MarimoView extends EditableFileView {
     }
   }
 
-  /**
-   * Connect as soon as the static preview is ready.
-   *
-   * Used right after "new marimo notebook": the file exists but shows nothing
-   * until a kernel runs it, so waiting for a second click would leave the user
-   * looking at an empty notebook. A preview that never becomes ready inside the
-   * deadline stays disconnected rather than spinning forever.
-   */
+  /** Connect after static preview only when called by an explicit opt-in path. */
   async autoConnect(): Promise<void> {
     const deadline=Date.now()+15_000;
     while(!this.closed&&!this.notebookReady&&Date.now()<deadline) await new Promise(resolve=>setTimeout(resolve,50));
@@ -2178,7 +2170,7 @@ export class MarimoView extends EditableFileView {
     if(output.kind==='text') {if(output.text)target.createEl('pre',{cls:'marimo-native-text'+errorClass,text:output.text}); return;}
     if(output.kind==='plotly'||output.kind==='vega') {
       // The spec was JSON-validated by safeOutput; the chart libraries render
-      // it through their APIs from the CDN, with an offline note on failure.
+      // it through their locally bundled APIs, with a readable note on failure.
       try {
         const spec=JSON.parse(output.text) as unknown;
         if(output.kind==='plotly')void renderPlotly(target,spec);

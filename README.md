@@ -1,54 +1,105 @@
 # MarimoNotebook
 
-独立的 Obsidian 原生 marimo 前端，不嵌入官方网页。当前验证环境为 macOS、Obsidian 1.14.5、Python 3.12、marimo 0.25.2，尚非可发布的完整插件。
+[![CI](https://github.com/kains2866/obsidian-marimo-notebook/actions/workflows/ci.yml/badge.svg)](https://github.com/kains2866/obsidian-marimo-notebook/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Desktop only](https://img.shields.io/badge/Obsidian-Desktop%20only-7c3aed)
+![Runtime](https://img.shields.io/badge/marimo-0.25.2-1b806a)
 
-## 已验证能力
+**A native marimo notebook editor inside Obsidian, powered by your local Python environment.**
 
-- 文件列表点击 `.py` 直接打开；先以只读单元格预览，不运行 Notebook。普通 Python 脚本显示只读源码。
-- 原生 CodeMirror 单元格编辑，字体与代码颜色使用 Obsidian 主题变量；悬停单元格右上角可下方插入、上移/下移、删除，工具栏可新增单元格。
-- 修改并运行上游单元格，由官方后端自动重算下游。
-- 基础文本、Markdown/HTML、图片（PNG/JPEG/GIF/WebP 的内联 data URL）与错误输出；静态过滤脚本、远程资源和上游样式。
-- `mo.ui.*` 交互组件以 Obsidian 原生控件呈现：滑块、数字、文本/多行文本、复选、开关、单选、下拉、多选、日期/时间、按钮、tabs、form、只读表格。改动会写回内核并自动重算下游。
-- 单元格配置通过行内菜单调整：隐藏代码（输出保留、编辑器隐藏）、禁用/启用（禁用单元格不可运行，下游标记为不可用）、展开/折叠输出；配置随保存写入文件（如 `@app.cell(hide_code=True)`）。
-- 工具栏「格式化」用官方 ruff 服务重写全部单元格（保留撤销历史，不执行代码）；「运行陈旧」只运行编辑过但未重新执行的单元格。
-- 快捷键：Cmd/Ctrl+Enter 运行当前单元格，Shift+Enter 运行并跳到下一单元格；输入时由内核语言服务提供代码补全。
-- `input()` 会在输出区弹出输入框，回答后继续执行；运行中可以「中断运行」，不丢会话。
-- 调用官方服务生成标准 marimo `.py`，由适配层原子保存，单元格顺序按编辑器顺序写入；保留名称和单元格配置；拒绝静默覆盖外部修改。
-- 显式允许执行后启动仅本机认证服务；关闭页面清理自身进程。
+Edit reactive Python notebooks using Obsidian's DOM, CodeMirror editors, theme colors and side panels. The main notebook view does not embed a website or webview. Files remain standard marimo `.py` notebooks.
 
-## 文档
+[简体中文](README.zh-CN.md) · [Example notebook](docs/examples/marimo-showcase.py) · [Documentation](docs/README.md) · [Releases](https://github.com/kains2866/obsidian-marimo-notebook/releases)
 
-- 当前设计、计划、验证与界面规范：`docs/`（入口 `docs/README.md`）
-- 已废弃的网页嵌入路线：`docs/history/`，仅作历史参考，不得据此实施
-- 宿主验证脚本、截图与证据：工作区 `../assets/`（生成物不入库）
+> Early release preparation, version **0.0.1**. This repository is not yet listed in the Obsidian community directory. Native rendering covers a subset of marimo, rather than every feature of the official editor.
 
-## 在 Temp 中试用
+## What you can do
 
-已安装至 Temp 的 `.obsidian/plugins/marimo-notebook/`。在文件列表点击 `marimo-native-demo.py` 即可打开并预览单元格；点击“连接并运行”后可编辑。若其他插件已关联 `.py`，会保留原关联，可用文件右键菜单“以原生 marimo 视图打开”或命令面板入口。设置中的 Python 文件关联开关在重新加载插件后生效。修改 `x` 后运行该块，查看数值和 Markdown 输出一起更新。保存需点击工具栏“保存”。
+- **Edit natively:** create, reorder, split and delete cells; edit Markdown cells, hide code, disable cells and collapse outputs.
+- **Keep reactive execution:** connect to the real local marimo runtime; rerun edited cells and their downstream dependants. Inspect variables and cell dependencies in side panels.
+- **Read before running:** open `.py` files as static, read-only content first. New installations require an explicit connection before notebook code runs. Ordinary Python scripts stay read-only.
+- **Use interactive outputs:** sliders, text fields, dropdowns, forms, tabs, tables and other supported `mo.ui` controls write values back to the kernel. Tables support search, sorting and row selection. Dataframe output provides a structural preview, not a full data editor.
+- **Work with rich results:** Markdown previews (including formulas), images, Plotly and Vega/Altair charts, input prompts and errors. Chart engines are bundled rather than downloaded as CDN scripts.
+- **Navigate and save:** outline headings, cell dependency views, code completion, run shortcuts, standard marimo saves and recovery drafts for unsaved changes. Saving refuses to silently overwrite externally changed files.
+- **Optionally connect an AI provider:** generate or refactor cells, chat about the current notebook, and use inline completion through an OpenAI-compatible endpoint you configure.
 
-首次连接会运行可信 Notebook 的代码。Python 虚拟环境不构成安全沙箱。
+`Mod+Enter` runs the current cell; `Shift+Enter` runs it and moves to the next cell. For features unavailable in the native UI, the toolbar can explicitly open the notebook in the official browser editor.
 
-## 当前限制
+## Installation
 
-- 静态预览仅支持标准 `@app.cell` 结构（包括 import 别名）。语法错误、setup 等暂未适配的结构会显示原因并保留完整源码，不展示不完整的单元格列表。
-- 锁定 marimo 0.25.2 内部协议；未经验证的版本会被拒绝，不跟随上游自动升级。
-- `mo.ui` 中需要 JavaScript 模型或专用编辑器的组件不渲染：anywidget、plotly/altair 图表、data-editor、data-explorer、file、file-browser、code-editor、matrix、dict、date-range；其中 anywidget 静默（marimo 自己也会从 `import marimo as mo` 单元格发出内部占位），其余显示类型说明。表格为只读（无选择/筛选/下载）。
-- Markdown 单元格当前编辑其 `mo.md(...)` Python 表达式，输出区呈现排版；尚未制作专门 Markdown 编辑模式。
-- 多列布局（`column` 配置）暂按单列渲染；配置可通过保存写入文件，但视图尚未并排呈现。
-- 未保存内容关闭或会话失败时写入本机持久草稿目录 `~/.local/state/obsidian-marimo/drafts/`。重新连接后会自动恢复未保存内容（包括新增/删除的单元格），也可点击“恢复草稿”；草稿基线与原文件不同时保留供手动恢复，不覆盖文件。
-- 原型遇到运行等待超时或输出超限会结束会话，需重新连接；暂不用于长任务。带独立布局文件的 Notebook 暂不支持保存。
-- Windows/Linux尚未实机验证；源码中的跨平台路径不等于已支持。
+Requirements: **Obsidian desktop 1.13.0+**, **Python 3.12**, and exactly **marimo 0.25.2**. Local GUI verification uses macOS and Obsidian 1.14.5. Windows and Linux GUI behavior has not been verified on real devices.
 
-## 开发与验证
+### 1. Prepare Python yourself
 
-```bash
+Use a dedicated virtual environment. The plugin does not install or upgrade Python packages automatically.
+
+macOS / Linux:
+
+```sh
+python3.12 -m venv ~/.venvs/obsidian-marimo
+~/.venvs/obsidian-marimo/bin/python -m pip install marimo==0.25.2
+```
+
+Windows PowerShell:
+
+```powershell
+py -3.12 -m venv "$env:USERPROFILE\.venvs\obsidian-marimo"
+& "$env:USERPROFILE\.venvs\obsidian-marimo\Scripts\python.exe" -m pip install marimo==0.25.2
+```
+
+Packages used by your notebook, such as pandas or Altair, must be installed in the same environment. Other marimo versions are rejected because the plugin uses a version-specific protocol adapter.
+
+### 2. Install the plugin files
+
+Once a release is published, download its **three individual assets**: `main.js`, `manifest.json` and `styles.css`. Put them in `<vault>/.obsidian/plugins/marimo-notebook/`, then enable **MarimoNotebook** in Community plugins. No ZIP is needed for Obsidian's update mechanism.
+
+For a source checkout before the first release:
+
+```sh
+npm ci
+npm run build
+```
+
+Copy those same three files from `dist/` into the plugin folder. Node.js **24+** is needed to build and test the source, but not to use an installed plugin.
+
+### 3. Select Python and open a notebook
+
+In MarimoNotebook settings, select the environment's **Python executable**, not the `marimo` command. Open the [example](docs/examples/marimo-showcase.py), inspect it, and choose **Connect and run** only if you trust its code.
+
+Python file association can be disabled in settings. If another plugin owns `.py`, use the file context menu or command palette to open the native marimo view. **Auto-connect on open** is off for new installations; a previously saved explicit opt-in is preserved.
+
+## Privacy and execution
+
+- **Local execution is not a sandbox.** Connecting runs notebook Python with your user permissions. Virtual environments isolate packages, not filesystem or network access. Only run trusted notebooks.
+- The adapter launches an authenticated service on loopback, uses your chosen Python executable, and stops the processes it owns when its notebook session closes. The runtime is separately installed and is not included in the plugin bundle.
+- Recovery drafts are stored **outside the vault** in `~/.local/state/obsidian-marimo/drafts/<vault-hash>/`. They contain notebook code and are separate from saved `.py` files.
+- The plugin adds no telemetry. Python code, external datasets referenced by chart specifications, and the explicitly opened official editor may still make network requests. Bundling chart engines does not make arbitrary notebook content offline.
+- **AI is optional.** With an endpoint and model configured, AI actions send notebook code and variable context/value previews to that endpoint. Enabled inline completion may send context as you type. Provider terms and charges apply.
+- The AI key is sent as a Bearer credential and saved **in plaintext** in `<vault>/.obsidian/plugins/marimo-notebook/data.json`. Vault synchronization tools may sync it. Do not publish that file or include keys in diagnostics.
+
+## Current boundaries
+
+- Desktop only; no mobile or browser-only Python runtime.
+- Formula rendering follows Obsidian's Markdown preview; arbitrary kernel HTML/LaTeX output may retain formula source.
+- Native widgets and charts are implemented individually. JavaScript-backed third-party widgets, specialized data editors, file pickers and some layouts are not fully supported. Use the official editor when needed.
+- Static inspection handles supported standard `@app.cell` structures. Unsupported or invalid structures fall back to complete read-only source instead of presenting a partial notebook.
+- A timed-out or oversized protocol response can end a session and require reconnection. Notebooks with separate layout files are not supported for saving.
+- Integration currently includes file opening, themes, outline and notebook side panels. Do not assume all Markdown-only features, Properties or every community plugin work with `.py` notebooks.
+
+## Development
+
+```sh
+npm ci
 npm test
 npm run typecheck
 npm run build
-# 使用安装了 marimo 0.25.2 的 Python：
-/Users/tiyukains/.local/share/uv/tools/marimo/bin/python -m unittest discover -s tests -v
+npm run check:release -- --artifacts
 ```
 
-本项目的 `node_modules` 目前是指向 `obsidian-ipynb-workspace/obsidian-ipynb/node_modules` 的符号链接，复用对方工具链，因此不要在对方项目里增删依赖。该路径已被 `.gitignore` 忽略，不进入版本库。要独立开发，先删除该符号链接再运行 `npm install`。
+Use Python 3.12 with `pip install -r requirements-dev.txt`, then run `python -m unittest discover -s tests -p 'test_*.py'`. Tests include real local runtime interactions and execute test fixtures. Host verification is separate from unit/protocol testing.
 
-`dist/` 为本地插件产物（不入库）。工作区 `../assets/verify-native-opening.py` 为 Temp 文件点击、预览、运行保存及文件切换回归脚本，使用独立验证文件，不改写用户 demo；旧 `verify-host.py` / `verify-lifecycle.py` 会修改 demo，不应直接用于用户编辑后的文件。原有 Jupyter 项目不受此项目影响。
+[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Release process](docs/RELEASING.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+
+## License and acknowledgements
+
+Plugin source is [MIT licensed](LICENSE). This is an independent project, not an official marimo or Obsidian product. [marimo](https://github.com/marimo-team/marimo) is a separately installed, Apache-2.0-licensed runtime. Bundled libraries retain their own licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).

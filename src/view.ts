@@ -46,7 +46,7 @@ export class MarimoView extends EditableFileView {
   private backend: Backend | null = null;
   private editors = new Map<string, CellEditor>();
   private outputs = new Map<string, HTMLElement>();
-  private cells: Cell[] = [];
+  cells: Cell[] = [];
   private status!: HTMLElement;
   private toolbar!: HTMLElement;
   private environment!: HTMLElement;
@@ -122,6 +122,8 @@ export class MarimoView extends EditableFileView {
   private variableDecls: {name:string;declared_by:string[];used_by:string[]}[] = [];
   private variableValues = new Map<string,{name:string;datatype:string|null;value:string|null}>();
   private datasets: {name:string;source:string;numRows:number|null;numColumns:number|null;variableName:string|null;columns:{name:string;type:string}[]}[] = [];
+  /** Cells whose latest run raised, for the minimap's error color. */
+  private erroredCells = new Set<string>();
   constructor(leaf: WorkspaceLeaf, private plugin: MarimoPlugin) {super(leaf);}
   isClosed():boolean {return this.closed;}
   getViewType(): string {return VIEW_TYPE;}
@@ -487,7 +489,7 @@ export class MarimoView extends EditableFileView {
     if(!this.backend || this.busy || this.closed || this.connecting) return;
     const backend=this.backend;const operation=++this.operation;
     this.busy = true;
-    if(method==='run'){this.runPhase='running';this.changedSinceRun=false;}
+    if(method==='run'){this.runPhase='running';this.changedSinceRun=false;this.erroredCells.clear();this.publishVariables();}
     this.updateControls();
     try {
       await backend.request(method, {cells});
@@ -663,7 +665,10 @@ export class MarimoView extends EditableFileView {
     const display=target.querySelector<HTMLElement>('.marimo-native-display')!;
     const consoleEl=target.querySelector<HTMLElement>('.marimo-native-console')!;
     if(data.output) {
-      if((data.output as Record<string,unknown>).channel==='marimo-error')this.runPhase='failed';
+      if((data.output as Record<string,unknown>).channel==='marimo-error') {
+        this.runPhase='failed';
+        this.erroredCells.add(String(data.cell_id));
+      }
       // A static markdown cell paints itself locally with Obsidian's renderer;
       // the kernel's pre-rendered copy would only duplicate it. A dynamic one
       // (f-string with `{slots}`) cannot be rendered locally at all — its
@@ -1700,6 +1705,33 @@ export class MarimoView extends EditableFileView {
   currentDatasets(): {name:string;source:string;numRows:number|null;numColumns:number|null;variableName:string|null;columns:{name:string;type:string}[]}[] {
     return this.datasets;
   }
+
+  /**
+   * Dataflow edges from the kernel's variables broadcast: which names each
+   * cell defines (outputs) and reads (inputs). Empty until a run happens.
+   */
+  currentCellDeps(): Map<string,{outputs:string[];inputs:string[]}> {
+    const deps=new Map<string,{outputs:string[];inputs:string[]}>();
+    for(const cell of this.cells)deps.set(cell.id,{outputs:[],inputs:[]});
+    for(const entry of this.variableDecls) {
+      for(const id of entry.declared_by)deps.get(id)?.outputs.push(entry.name);
+      for(const id of entry.used_by)deps.get(id)?.inputs.push(entry.name);
+    }
+    return deps;
+  }
+
+  /** The cell's source as shown in the editor (or stored), for sidebar labels. */
+  cellSource(cellId:string): string {
+    return this.editors.get(cellId)?.view.state.doc.toString()??this.cells.find(cell=>cell.id===cellId)?.code??'';
+  }
+
+  getSelectedCellId(): string|null {return this.selectedId;}
+
+  /** Whether the cell renders as markdown (drives the minimap's color). */
+  isMarkdownCell(cellId:string): boolean {return this.markdownMode.has(cellId);}
+
+  /** Whether the cell's latest run raised (drives the minimap's red block). */
+  hasCellError(cellId:string): boolean {return this.erroredCells.has(cellId);}
 
   /** Outline follows markdown edits, debounced like the preview repaint. */
   private scheduleOutlineRefresh(): void {

@@ -99,8 +99,7 @@ export class MarimoView extends EditableFileView {
 
   /** Markdown cells whose stored literal is an f-string (`mo.md(f"""…""")`). */
   private markdownFStrings = new Set<string>();
-  /** Right-hand outline rail, mirroring the native editor's heading rail. */
-  private outlineRail!: HTMLElement;
+  /** The outline is a dock view; edits are debounced before it is notified. */
   private outlineTimer: ReturnType<typeof setTimeout>|null = null;
   constructor(leaf: WorkspaceLeaf, private plugin: MarimoPlugin) {super(leaf);}
   isClosed():boolean {return this.closed;}
@@ -293,12 +292,8 @@ export class MarimoView extends EditableFileView {
     this.notice.hidden = true;
     this.previewNote = this.contentEl.createDiv({cls:'marimo-native-preview-note'});
     this.previewNote.hidden = true;
-    // Notebook and outline sit side by side, like the native editor's heading
-    // rail on the right edge of the notebook.
-    const lower=this.contentEl.createDiv({cls:'marimo-native-lower'});
-    this.body = lower.createDiv({cls:'marimo-native-cells'});
-    this.outlineRail = lower.createDiv({cls:'marimo-native-outline'});
-    this.outlineRail.setAttribute('aria-label',this.plugin.t('大纲','Outline'));
+    // The outline lives in Obsidian's right dock; the notebook owns the width.
+    this.body = this.contentEl.createDiv({cls:'marimo-native-cells'});
 
     this.refreshEnvironment();
     // Obsidian's editor keymap claims Mod-Enter before CodeMirror sees it, so the
@@ -1230,29 +1225,29 @@ export class MarimoView extends EditableFileView {
     document.addEventListener('scroll',this.menuDismiss,{capture:true});
   }
 
-  /** Rebuild the outline rail from the current markdown cells. */
+  /** The outline lives in Obsidian's right dock; notify it of any change. */
   private refreshOutline(): void {
-    if(!this.outlineRail||this.closed)return;
-    this.outlineRail.empty();
-    this.outlineRail.createDiv({cls:'marimo-native-outline-title',text:this.plugin.t('大纲','Outline')});
-    let count=0;
+    if(this.closed)return;
+    this.app.workspace.trigger('marimo-outline-changed',this);
+  }
+
+  /** Headings across all cells, markdown cells in source or rendered mode. */
+  currentOutline(): {level:number;text:string;cellId:string}[] {
+    const entries: {level:number;text:string;cellId:string}[]=[];
     for(const cell of this.cells) {
       const editor=this.editors.get(cell.id);
       const doc=editor?editor.view.state.doc.toString():cell.code;
       const markdown=this.markdownMode.has(cell.id)?doc:parseMarkdownCell(doc)?.markdown??null;
       if(!markdown)continue;
-      for(const entry of outlineEntries(markdown)) {
-        count+=1;
-        const button=this.outlineRail.createEl('button',{cls:'marimo-native-outline-item',text:entry.text});
-        button.dataset.level=String(entry.level);
-        button.onclick=()=>{
-          this.rowFor(cell.id)?.scrollIntoView({block:'start',behavior:'smooth'});
-          this.selectCell(cell.id);
-        };
-      }
+      for(const entry of outlineEntries(markdown)) entries.push({...entry,cellId:cell.id});
     }
-    this.outlineRail.toggleClass('is-empty',count===0);
-    if(!count)this.outlineRail.createDiv({cls:'marimo-native-outline-empty',text:this.plugin.t('暂无标题','No headings')});
+    return entries;
+  }
+
+  /** Jump from the sidebar outline (or rail) to a cell and select it. */
+  revealCell(cellId:string): void {
+    this.rowFor(cellId)?.scrollIntoView({block:'start',behavior:'smooth'});
+    this.selectCell(cellId);
   }
 
   /** Outline follows markdown edits, debounced like the preview repaint. */
@@ -1260,7 +1255,6 @@ export class MarimoView extends EditableFileView {
     if(this.outlineTimer)clearTimeout(this.outlineTimer);
     this.outlineTimer=setTimeout(()=>{this.outlineTimer=null;this.refreshOutline();},300);
   }
-
   private async deleteCell(cellId:string):Promise<void> {
     const backend=this.backend;
     // A notebook keeps at least one cell: an empty app cannot be saved.
@@ -1734,6 +1728,8 @@ export class MarimoView extends EditableFileView {
     if(this.keyScope){this.app.keymap.popScope(this.keyScope);this.keyScope=null;}
     this.closed=true;this.loadGeneration++;this.inspection?.abort();
     if(this.outlineTimer){clearTimeout(this.outlineTimer);this.outlineTimer=null;}
+    // The sidebar outline follows the active notebook; this one is gone.
+    this.app.workspace.trigger('marimo-outline-changed',this);
     this.closing=this.releaseFileSession();return this.closing;
   }
 }

@@ -5,6 +5,7 @@ import {join, resolve, sep} from 'node:path';
 import {createHash} from 'node:crypto';
 import {RecoveryStore, normalizePython} from './recovery';
 import {MarimoView, VIEW_TYPE} from './view';
+import {MarimoOutlineView, VIEW_TYPE_OUTLINE} from './outline-view';
 import {NOTEBOOK_TEMPLATE, nextNotebookPath} from './notebook-file';
 import type {Cell} from './protocol';
 import {WriterLocks,type WriterLease} from './writer-lock';
@@ -22,6 +23,18 @@ export default class MarimoPlugin extends Plugin {
     this.settings={pythonPath:normalizePython(saved?.pythonPath,existsSync(fallback)?fallback:'python3'),associatePython:saved?.associatePython!==false,renderMarkdown:saved?.renderMarkdown!==false,autoConnect:saved?.autoConnect!==false};
     this.recovery=new RecoveryStore(join(homedir(),'.local','state','obsidian-marimo','drafts',createHash('sha256').update(this.absoluteRoot()).digest('hex')));
     this.registerView(VIEW_TYPE,leaf=>new MarimoView(leaf,this));
+    // marimo's outline lives in Obsidian's right dock, next to the core
+    // Outline view, and follows the active notebook automatically.
+    this.registerView(VIEW_TYPE_OUTLINE,leaf=>new MarimoOutlineView(leaf,this));
+    this.addCommand({id:'open-marimo-outline',name:this.t('打开 marimo 大纲','Open marimo outline'),callback:()=>{
+      // Reuse the pane if it exists; a second command press must not stack
+      // another empty leaf into the right dock.
+      const existing=this.app.workspace.getLeavesOfType(VIEW_TYPE_OUTLINE)[0];
+      const leaf=existing??this.app.workspace.getRightLeaf(false);
+      if(!leaf)return;
+      const done=existing?Promise.resolve():leaf.setViewState({type:VIEW_TYPE_OUTLINE,active:true});
+      void done.then(()=>this.app.workspace.revealLeaf(leaf));
+    }});
     if(this.settings.associatePython) {
       try{this.registerExtensions(['py'],VIEW_TYPE);this.associationStatus=this.t('点击 Python 文件会在此插件中打开，普通脚本只读显示。','Clicking Python files opens this view; ordinary scripts are shown read-only.');}
       catch{this.associationStatus=this.t('Python 文件已由其他插件接管，保留原关联；可使用右键菜单或命令打开。','Another plugin handles Python files. Its association is preserved; use the context menu or command.');}

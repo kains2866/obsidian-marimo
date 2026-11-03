@@ -295,11 +295,11 @@
 .marimo-native-md-tool:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
 .marimo-native-md-tool svg { width: 14px; height: 14px; }
 
-/* The per-cell popover: same actions as the host menu, but ours to verify.
-   Positioned inline (fixed, anchored to its button) so no cell frame or
-   scroll container can clip it. */
+/* The per-cell popover uses fixed positioning so no cell frame or scroll
+   container can clip it. Its anchor coordinates are calculated in the view. */
 .marimo-native-cell-menu {
   position: fixed;
+  right: auto;
   z-index: 100;
   display: flex;
   flex-direction: column;

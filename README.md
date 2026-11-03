@@ -11,7 +11,7 @@ Edit reactive Python notebooks using Obsidian's DOM, CodeMirror editors, theme c
 
 [简体中文](README.zh-CN.md) · [Example notebook](docs/examples/marimo-showcase.py) · [Documentation](docs/README.md) · [Releases](https://github.com/kains2866/obsidian-marimo/releases)
 
-> Early release preparation, version **0.0.1**. This repository is not yet listed in the Obsidian community directory. Native rendering covers a subset of marimo, rather than every feature of the official editor.
+> Early release, version **0.0.2**. Obsidian community-directory approval is pending. Native rendering covers a subset of marimo, rather than every feature of the official editor.
 
 ## What you can do
 

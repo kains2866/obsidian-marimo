@@ -1285,8 +1285,6 @@ export class MarimoView extends EditableFileView {
     const menu=this.contentEl.createDiv({cls:'marimo-native-cell-menu'});
     menu.dataset.anchor='1';
     this.menuAnchor=anchor;
-    menu.style.position='fixed';
-    menu.style.right='auto';
     return menu;
   }
 

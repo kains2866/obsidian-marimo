@@ -11,7 +11,7 @@
 
 [English](README.md) · [示例笔记本](docs/examples/marimo-showcase.py) · [文档](docs/README.md) · [发行页面](https://github.com/kains2866/obsidian-marimo/releases)
 
-> 当前为 **0.0.1 首次发行准备阶段**，尚未上架 Obsidian 社区目录。原生渲染覆盖部分 marimo 功能，不保证与官方编辑器完全一致。
+> 当前为 **0.0.2 早期版本**，尚未完成 Obsidian 社区目录审核。原生渲染覆盖部分 marimo 功能，不保证与官方编辑器完全一致。
 
 ## 主要功能
 

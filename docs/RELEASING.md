@@ -1,6 +1,6 @@
 # 发行流程
 
-当前版本为 `0.0.1`。创建 GitHub 仓库不等于发布 Release，也不等于完成社区目录审核。
+当前版本为 `0.0.2`。创建 GitHub 仓库不等于发布 Release，也不等于完成社区目录审核。
 
 ## 版本与预检
 
@@ -15,7 +15,7 @@ npm test
 npm run typecheck
 python -m unittest discover -s tests -p 'test_*.py'
 npm run build
-npm run check:release -- --artifacts --tag 0.0.1
+npm run check:release -- --artifacts --tag 0.0.2
 ```
 
 以上命令末尾版本需替换为实际发行版本。自动检查覆盖版本一致性、英文首页、标题、许可、版本映射、发行说明、产物与源码清单／样式一致，以及遗漏的运行时 npm 依赖；不替代人工宿主验证或官方审核。
@@ -24,7 +24,7 @@ npm run check:release -- --artifacts --tag 0.0.1
 
 ## GitHub Release
 
-获得发布授权后，提交并推送源码，再推送与 manifest **完全一致**的 tag，例如 `0.0.1`，不加 `v`。标签工作流会重新安装、测试、构建、预检，并创建 **draft Release**；人工检查后再发布。
+获得发布授权后，提交并推送源码，再推送与 manifest **完全一致**的 tag，例如 `0.0.2`，不加 `v`。标签工作流会重新安装、测试、构建、预检，并创建 **draft Release**；人工检查后再发布。
 
 工作流的发行附件严格为：
 

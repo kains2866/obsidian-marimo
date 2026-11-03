@@ -13,7 +13,7 @@ status: current
 
 - [英文首页](../README.md)／[中文首页](../README.zh-CN.md)：当前功能、安装、隐私与边界。
 - [发行准备计划](superpowers/plans/2026-11-02-release-preparation.md)／[发行流程](RELEASING.md)／[提交材料](SUBMISSION.md)。
-- [0.0.1 发行说明](releases/0.0.1.md)／[第三方许可](../THIRD_PARTY_NOTICES.md)。
+- [0.0.2 发行说明](releases/0.0.2.md)／[0.0.1 发行说明](releases/0.0.1.md)／[第三方许可](../THIRD_PARTY_NOTICES.md)。
 
 下方的设计与早期验证记录保留各自日期对应的范围；当前功能以首页和源码为准。
 

@@ -1,6 +1,6 @@
 # Obsidian 社区目录提交材料
 
-当前为预备材料，尚未发布匹配的正式 Release，尚未提交社区目录。以下信息与根目录 manifest 一致。
+以下材料与根目录 manifest 一致。正式发行与审核状态，以 GitHub Release 和社区目录页面为准。
 
 | 字段 | 内容 |
 | --- | --- |
@@ -8,7 +8,7 @@
 | ID | marimo-native |
 | Author | Kains |
 | Repository | kains2866/obsidian-marimo |
-| Version | 0.0.1 |
+| Version | 0.0.2 |
 | Minimum app version | 1.13.0 |
 | Desktop only | true |
 | License | MIT |

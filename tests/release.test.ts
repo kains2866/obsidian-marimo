@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {validateReleaseMetadata,validateAssetNames} from '../scripts/release-lib.mjs';
 
-const valid=()=>({manifest:{id:'marimo-notebook',name:'MarimoNotebook',version:'0.0.1',minAppVersion:'1.13.0',description:'Edit and run marimo notebooks with a native interface and a local Python runtime.',author:'Kains',isDesktopOnly:true},pkg:{version:'0.0.1'},versions:{'0.0.1':'1.13.0'},readme:'# MarimoNotebook\n\n## Installation\nEdit notebooks.',readmeZh:'# MarimoNotebook\n\n安装说明。'});
+const valid=()=>({manifest:{id:'marimo-native',name:'Marimo Native',version:'0.0.1',minAppVersion:'1.13.0',description:'Edit and run marimo notebooks with a native interface and a local Python runtime.',author:'Kains',isDesktopOnly:true},pkg:{version:'0.0.1'},versions:{'0.0.1':'1.13.0'},readme:'# Marimo Native\n\n## Installation\nEdit notebooks.',readmeZh:'# Marimo Native\n\n安装说明。'});
 test('matching store metadata and individual assets are accepted',()=>{
   assert.deepEqual(validateReleaseMetadata(valid()),[]);
   assert.deepEqual(validateAssetNames(['main.js','styles.css','manifest.json']),[]);

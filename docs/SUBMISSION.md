@@ -4,21 +4,21 @@
 
 | 字段 | 内容 |
 | --- | --- |
-| Name | MarimoNotebook |
-| ID | marimo-notebook |
+| Name | Marimo Native |
+| ID | marimo-native |
 | Author | Kains |
-| Repository | kains2866/obsidian-marimo-notebook |
+| Repository | kains2866/obsidian-marimo |
 | Version | 0.0.1 |
 | Minimum app version | 1.13.0 |
 | Desktop only | true |
 | License | MIT |
 | Description | Edit and run reactive marimo notebooks with a native interface and a local Python runtime. |
 
-2026-11-02 检查官方插件登记表时，未发现相同 ID 或名称；这不构成名称保留或审核承诺。
+原 ID `marimo-notebook` 与社区目录中已有的归档条目冲突，现采用 `marimo-native`／Marimo Native。公开登记表未覆盖所有归档或保留条目，最终名称与 ID 是否可提交，以社区目录的实际校验为准。
 
 ## English overview
 
-MarimoNotebook brings a native marimo notebook editing interface to Obsidian desktop. Edit cells and Markdown using Obsidian's theme, run reactive Python locally, and inspect headings, variables and cell dependencies without embedding the official website in the main notebook view.
+Marimo Native brings a native marimo notebook editing interface to Obsidian desktop. Edit cells and Markdown using Obsidian's theme, run reactive Python locally, and inspect headings, variables and cell dependencies without embedding the official website in the main notebook view.
 
 The plugin requires a separately installed Python 3.12 environment with marimo 0.25.2. New installations open files without executing notebook code until the user connects. Supported widgets, tables, images and charts render in the native view; unsupported features can be opened explicitly in the official browser editor.
 

@@ -1,6 +1,6 @@
 {
-  "id": "marimo-notebook",
-  "name": "MarimoNotebook",
+  "id": "marimo-native",
+  "name": "Marimo Native",
   "version": "0.0.1",
   "minAppVersion": "1.13.0",
   "description": "Edit and run reactive marimo notebooks with a native interface and a local Python runtime.",

@@ -1,6 +1,6 @@
-# MarimoNotebook
+# Marimo Native
 
-[![CI](https://github.com/kains2866/obsidian-marimo-notebook/actions/workflows/ci.yml/badge.svg)](https://github.com/kains2866/obsidian-marimo-notebook/actions/workflows/ci.yml)
+[![CI](https://github.com/kains2866/obsidian-marimo/actions/workflows/ci.yml/badge.svg)](https://github.com/kains2866/obsidian-marimo/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Desktop only](https://img.shields.io/badge/Obsidian-Desktop%20only-7c3aed)
 ![Runtime](https://img.shields.io/badge/marimo-0.25.2-1b806a)
@@ -9,7 +9,7 @@
 
 Edit reactive Python notebooks using Obsidian's DOM, CodeMirror editors, theme colors and side panels. The main notebook view does not embed a website or webview. Files remain standard marimo `.py` notebooks.
 
-[简体中文](README.zh-CN.md) · [Example notebook](docs/examples/marimo-showcase.py) · [Documentation](docs/README.md) · [Releases](https://github.com/kains2866/obsidian-marimo-notebook/releases)
+[简体中文](README.zh-CN.md) · [Example notebook](docs/examples/marimo-showcase.py) · [Documentation](docs/README.md) · [Releases](https://github.com/kains2866/obsidian-marimo/releases)
 
 > Early release preparation, version **0.0.1**. This repository is not yet listed in the Obsidian community directory. Native rendering covers a subset of marimo, rather than every feature of the official editor.
 
@@ -51,7 +51,7 @@ Packages used by your notebook, such as pandas or Altair, must be installed in t
 
 ### 2. Install the plugin files
 
-Once a release is published, download its **three individual assets**: `main.js`, `manifest.json` and `styles.css`. Put them in `<vault>/.obsidian/plugins/marimo-notebook/`, then enable **MarimoNotebook** in Community plugins. No ZIP is needed for Obsidian's update mechanism.
+Once a release is published, download its **three individual assets**: `main.js`, `manifest.json` and `styles.css`. Put them in `<vault>/.obsidian/plugins/marimo-native/`, then enable **Marimo Native** in Community plugins. No ZIP is needed for Obsidian's update mechanism.
 
 For a source checkout before the first release:
 
@@ -64,7 +64,7 @@ Copy those same three files from `dist/` into the plugin folder. Node.js **24+**
 
 ### 3. Select Python and open a notebook
 
-In MarimoNotebook settings, select the environment's **Python executable**, not the `marimo` command. Open the [example](docs/examples/marimo-showcase.py), inspect it, and choose **Connect and run** only if you trust its code.
+In Marimo Native settings, select the environment's **Python executable**, not the `marimo` command. Open the [example](docs/examples/marimo-showcase.py), inspect it, and choose **Connect and run** only if you trust its code.
 
 Python file association can be disabled in settings. If another plugin owns `.py`, use the file context menu or command palette to open the native marimo view. **Auto-connect on open** is off for new installations; a previously saved explicit opt-in is preserved.
 
@@ -75,7 +75,7 @@ Python file association can be disabled in settings. If another plugin owns `.py
 - Recovery drafts are stored **outside the vault** in `~/.local/state/obsidian-marimo/drafts/<vault-hash>/`. They contain notebook code and are separate from saved `.py` files.
 - The plugin adds no telemetry. Python code, external datasets referenced by chart specifications, and the explicitly opened official editor may still make network requests. Bundling chart engines does not make arbitrary notebook content offline.
 - **AI is optional.** With an endpoint and model configured, AI actions send notebook code and variable context/value previews to that endpoint. Enabled inline completion may send context as you type. Provider terms and charges apply.
-- The AI key is sent as a Bearer credential and saved **in plaintext** in `<vault>/.obsidian/plugins/marimo-notebook/data.json`. Vault synchronization tools may sync it. Do not publish that file or include keys in diagnostics.
+- The AI key is sent as a Bearer credential and saved **in plaintext** in `<vault>/.obsidian/plugins/marimo-native/data.json`. Vault synchronization tools may sync it. Do not publish that file or include keys in diagnostics.
 
 ## Current boundaries
 

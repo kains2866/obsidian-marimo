@@ -27,3 +27,5 @@ scope:
 ## 修订记录
 
 - 2026-11-01：根据用户确认建立独立原生路线。
+
+> 名称更新：工作名 MarimoNotebook 后续调整为 Marimo Native，插件 ID 为 `marimo-native`。

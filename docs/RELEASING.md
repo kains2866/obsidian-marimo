@@ -42,7 +42,7 @@ npm run check:release -- --artifacts --tag 0.0.1
 npm run package
 ```
 
-需要 Python 3；可用 `MARIMO_TEST_PYTHON` 指定其路径。生成的 `release/marimo-notebook-<version>.zip` 内含 `marimo-notebook/` 文件夹及三个插件文件，可解压到 `<vault>/.obsidian/plugins/`。不会递归清空已有 release 目录；ZIP 不提交、不作为商店 Release 附件。
+需要 Python 3；可用 `MARIMO_TEST_PYTHON` 指定其路径。生成的 `release/marimo-native-<version>.zip` 内含 `marimo-native/` 文件夹及三个插件文件，可解压到 `<vault>/.obsidian/plugins/`。不会递归清空已有 release 目录；ZIP 不提交、不作为商店 Release 附件。
 
 ## 提交 Obsidian 社区目录
 

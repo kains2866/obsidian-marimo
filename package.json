@@ -1,5 +1,5 @@
 {
-  "name": "obsidian-marimo-notebook",
+  "name": "obsidian-marimo",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -34,12 +34,12 @@
   "author": "Kains",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kains2866/obsidian-marimo-notebook.git"
+    "url": "https://github.com/kains2866/obsidian-marimo.git"
   },
   "bugs": {
-    "url": "https://github.com/kains2866/obsidian-marimo-notebook/issues"
+    "url": "https://github.com/kains2866/obsidian-marimo/issues"
   },
-  "homepage": "https://github.com/kains2866/obsidian-marimo-notebook#readme",
+  "homepage": "https://github.com/kains2866/obsidian-marimo#readme",
   "engines": {
     "node": ">=24"
   }

@@ -29,3 +29,7 @@ Explain local Python execution and explicit trust, the pinned marimo `0.25.2` / 
 - https://docs.obsidian.md/community-directory/submission-requirements-for-plugins
 
 The repository root manifest is used for directory review. A matching version tag and release with individual assets is additionally needed before users can install from the directory. That later publication is not part of this task.
+
+## 后续更名
+
+用户确认新名称 **Marimo Native**、ID `marimo-native`，原 ID 与已归档商店条目冲突。GitHub 仓库已由用户更名为 `kains2866/obsidian-marimo`；以当前 manifest 与提交材料为准。本文前面的名称为最初准备阶段的历史记录。

@@ -128,7 +128,7 @@ export class MarimoView extends EditableFileView {
   constructor(leaf: WorkspaceLeaf, private plugin: MarimoPlugin) {super(leaf);}
   isClosed():boolean {return this.closed;}
   getViewType(): string {return VIEW_TYPE;}
-  getDisplayText(): string {return this.file?.basename||this.filename.split('/').pop()||'MarimoNotebook';}
+  getDisplayText(): string {return this.file?.basename||this.filename.split('/').pop()||'Marimo Native';}
   canAcceptExtension(extension:string):boolean {return extension.toLowerCase()==='py';}
   getIcon(): string {return 'notebook-pen';}
   getState(): Record<string, unknown> {return {...super.getState(),file:this.file?.path||this.filename,filename:this.file?.path||this.filename};}

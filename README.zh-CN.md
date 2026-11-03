@@ -1,6 +1,6 @@
-# MarimoNotebook
+# Marimo Native
 
-[![CI](https://github.com/kains2866/obsidian-marimo-notebook/actions/workflows/ci.yml/badge.svg)](https://github.com/kains2866/obsidian-marimo-notebook/actions/workflows/ci.yml)
+[![CI](https://github.com/kains2866/obsidian-marimo/actions/workflows/ci.yml/badge.svg)](https://github.com/kains2866/obsidian-marimo/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Desktop only](https://img.shields.io/badge/Obsidian-Desktop%20only-7c3aed)
 ![Runtime](https://img.shields.io/badge/marimo-0.25.2-1b806a)
@@ -9,7 +9,7 @@
 
 单元格使用 Obsidian 的 DOM、CodeMirror、主题色和侧栏。主要笔记本界面不嵌入网页或 webview；保存后仍是标准 marimo `.py` 文件。
 
-[English](README.md) · [示例笔记本](docs/examples/marimo-showcase.py) · [文档](docs/README.md) · [发行页面](https://github.com/kains2866/obsidian-marimo-notebook/releases)
+[English](README.md) · [示例笔记本](docs/examples/marimo-showcase.py) · [文档](docs/README.md) · [发行页面](https://github.com/kains2866/obsidian-marimo/releases)
 
 > 当前为 **0.0.1 首次发行准备阶段**，尚未上架 Obsidian 社区目录。原生渲染覆盖部分 marimo 功能，不保证与官方编辑器完全一致。
 
@@ -51,7 +51,7 @@ Notebook 使用的 pandas、Altair 等包也需装入同一环境。由于插件
 
 ### 2. 放置插件文件
 
-正式发布后，从发行页面下载 `main.js`、`manifest.json`、`styles.css` **三个独立附件**，放入 `<vault>/.obsidian/plugins/marimo-notebook/`，在社区插件中启用 MarimoNotebook。Obsidian 自动更新不需要 ZIP。
+正式发布后，从发行页面下载 `main.js`、`manifest.json`、`styles.css` **三个独立附件**，放入 `<vault>/.obsidian/plugins/marimo-native/`，在社区插件中启用 Marimo Native。Obsidian 自动更新不需要 ZIP。
 
 首次发布前，可从源码构建：
 
@@ -75,7 +75,7 @@ npm run build
 - 恢复草稿保存在**仓库外**的 `~/.local/state/obsidian-marimo/drafts/<vault-hash>/`，包含未保存的 Notebook 代码，与已保存 `.py` 文件分开。
 - 插件不添加遥测。Python 代码、图表规格引用的远程数据，以及明确打开的官方编辑器仍可能联网。图表库本地化不代表任意 Notebook 内容都能离线使用。
 - **AI 为可选功能**。配置端点和模型后，AI 操作会将 Notebook 代码、变量上下文及值预览发送到该端点；启用行内补全时，输入过程中可能发送上下文。服务条款和费用由提供商决定。
-- AI 密钥通过 Bearer 请求头发送，并**明文保存**于 `<vault>/.obsidian/plugins/marimo-notebook/data.json`，可能被仓库同步工具同步。请勿公开该文件或在诊断信息中粘贴密钥。
+- AI 密钥通过 Bearer 请求头发送，并**明文保存**于 `<vault>/.obsidian/plugins/marimo-native/data.json`，可能被仓库同步工具同步。请勿公开该文件或在诊断信息中粘贴密钥。
 
 ## 当前边界
 
